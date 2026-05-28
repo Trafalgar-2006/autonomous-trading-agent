@@ -1,0 +1,22 @@
+strategy:
+  name: "mean_reversion"
+  enabled: true
+  weight: 1.0
+  
+  parameters:
+    # Bollinger Bands
+    bb_period: 20
+    bb_std: 2.0
+    
+    # RSI
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    
+    # Z-Score
+    zscore_period: 20
+    zscore_entry: 2.0
+    zscore_exit: 0.5
+    
+    # Minimum confidence to emit signal
+    min_confidence: 0.5

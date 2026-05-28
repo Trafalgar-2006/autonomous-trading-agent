@@ -1,0 +1,27 @@
+strategy:
+  name: "momentum"
+  enabled: true
+  weight: 1.0
+  
+  parameters:
+    # RSI
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    
+    # MACD
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    
+    # Moving Averages
+    ema_fast: 9
+    ema_slow: 21
+    sma_trend: 50
+    
+    # ADX (trend strength)
+    adx_period: 14
+    adx_threshold: 25
+    
+    # Minimum confidence to emit signal
+    min_confidence: 0.5

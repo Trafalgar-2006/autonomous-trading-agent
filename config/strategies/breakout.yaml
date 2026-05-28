@@ -1,0 +1,23 @@
+strategy:
+  name: "breakout"
+  enabled: true
+  weight: 1.0
+  
+  parameters:
+    # Donchian Channel
+    donchian_period: 20
+    
+    # Volume
+    volume_surge_multiplier: 1.5
+    volume_avg_period: 20
+    
+    # ADX (trend strength)
+    adx_period: 14
+    adx_threshold: 25
+    
+    # ATR for stop-loss
+    atr_period: 14
+    atr_stop_multiplier: 2.0
+    
+    # Minimum confidence to emit signal
+    min_confidence: 0.5

@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+data/trading.db
+data/regime_model.pkl
+*.log
+.idea/
+.vscode/
+dist/
+build/

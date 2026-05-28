@@ -1,0 +1,85 @@
+# ============================================================
+# Trading Agent — Global Configuration
+# ============================================================
+
+general:
+  name: "TradingAgent"
+  version: "0.2.0"
+  mode: "paper"                  # paper | live
+  timezone: "US/Eastern"
+  log_level: "INFO"
+
+# ============================================================
+# Universe — Core symbols (always monitored)
+# ============================================================
+universe:
+  # These are always scanned regardless of market scanner results
+  symbols:
+    # --- Current Holdings ---
+    - "KMI"      # Kinder Morgan (currently held)
+    # --- Large Cap Tech ---
+    - "AAPL"     # Apple
+    - "MSFT"     # Microsoft
+    - "GOOGL"    # Alphabet
+    - "AMZN"     # Amazon
+    - "NVDA"     # Nvidia
+    - "META"     # Meta
+    - "TSLA"     # Tesla
+    - "AMD"      # AMD
+    # --- ETFs ---
+    - "SPY"      # S&P 500 ETF
+    - "QQQ"      # Nasdaq 100 ETF
+    - "IWM"      # Russell 2000 Small Cap
+    - "XLE"      # Energy sector
+    - "XLF"      # Financials sector
+    # --- High-Volume Mid/Large Cap ---
+    - "JPM"      # JPMorgan
+    - "BAC"      # Bank of America
+    - "INTC"     # Intel
+    - "NFLX"     # Netflix
+    - "CRM"      # Salesforce
+    - "DIS"      # Disney
+    - "GS"       # Goldman Sachs
+    - "UBER"     # Uber
+    - "COIN"     # Coinbase
+    - "PLTR"     # Palantir
+
+  # Data settings
+  lookback_days: 365             # How much historical data to load
+  timeframe: "1Day"              # 1Min, 5Min, 15Min, 1Hour, 1Day
+
+# ============================================================
+# Market Scanner — Discovers opportunities from entire market
+# ============================================================
+scanner:
+  enabled: true                  # Enable market-wide scanning
+  min_price: 2.00                # Min stock price (skip sub-$2 penny stocks)
+  max_price: 1500.00             # Max stock price
+  min_avg_volume: 500000         # Min 20-day avg volume (liquidity filter)
+  max_candidates: 100            # Max stocks to add from scanner
+  require_fractional: true       # Only scan fractional-share stocks
+  scan_time: "09:00"             # Run scanner daily at 9 AM ET (pre-market)
+  
+# ============================================================
+# Scheduling — When to run
+# ============================================================
+schedule:
+  # Market scan & signal generation
+  scan_interval_minutes: 30      # Run strategy scan every 30 min during market hours
+  
+  # Market hours (US Eastern)
+  market_open: "09:30"
+  market_close: "16:00"
+  
+  # Pre-market analysis
+  pre_market_scan: "09:15"       # Run analysis 15 min before open
+  
+  # End-of-day review
+  eod_review: "16:05"            # Review positions after close
+
+# ============================================================
+# Database
+# ============================================================
+database:
+  type: "sqlite"
+  path: "data/trading.db"

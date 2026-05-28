@@ -1,0 +1,43 @@
+# ============================================================
+# Risk Management Configuration
+# ============================================================
+# CRITICAL: These are safety limits. Override with extreme caution.
+
+risk_management:
+  # === Per-Trade Limits ===
+  max_risk_per_trade: 0.01       # Risk 1% of capital per trade ($1,002 at $100k)
+  max_position_size: 0.10        # Max 10% of portfolio in a single position ($10k)
+  min_position_value: 100.00     # Minimum $100 per trade
+
+  # === Portfolio Limits ===
+  max_total_exposure: 0.80       # Max 80% of capital deployed at once
+  max_open_positions: 8          # Max 8 open positions simultaneously
+  max_correlated_exposure: 0.30  # Max 30% in correlated assets (e.g., all tech)
+
+  # === Loss Limits (Circuit Breakers) ===
+  max_daily_loss: 0.02           # Stop if daily loss > 2% ($2,004 at $100k)
+  max_weekly_loss: 0.05          # Stop if weekly loss > 5% ($5,010)
+  max_consecutive_losses: 4      # Pause after 4 consecutive losses
+  cooldown_hours: 24             # Wait 24h after circuit breaker trips
+
+  # === Stop-Loss Configuration ===
+  stop_loss:
+    type: "atr"                  # atr | percentage | fixed
+    atr_multiplier: 2.0          # Stop at 2x ATR below entry
+    max_loss_pct: 0.03           # Hard cap: never lose more than 3% on a trade
+
+  trailing_stop:
+    enabled: true
+    activation_profit_atr: 1.0   # Activate after price moves 1x ATR in favor
+    trail_distance_atr: 1.5      # Trail at 1.5x ATR below high watermark
+
+  # === Position Sizing Method ===
+  position_sizing:
+    method: "fixed_fractional"   # fixed_fractional | kelly | volatility
+    fixed_risk_pct: 0.01         # Risk 1% per trade
+    kelly_fraction: 0.5          # Use half-Kelly when in Kelly mode
+
+  # === Capital Settings ===
+  capital:
+    initial: 100199.03           # Current account equity ($100,199.03)
+    reserve_pct: 0.10            # Keep 10% in cash reserve always ($10,020)

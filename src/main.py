@@ -1,0 +1,390 @@
+"""
+Trading Agent — Main Entry Point & Orchestrator.
+
+This is the central coordinator that ties all components together:
+- Initializes all modules
+- Runs scheduled market scans
+- Processes signals through risk → execution pipeline
+- Manages the lifecycle of the trading agent
+
+Usage:
+    # Scan markets and show signals (dry run)
+    python -m src.main scan
+    
+    # Run backtest on historical data
+    python -m src.main backtest
+    
+    # Start live/paper trading agent
+    python -m src.main run
+    
+    # Show account status
+    python -m src.main status
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import signal
+import sys
+
+# Fix Windows console encoding for Unicode (emojis, special chars)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+from rich.console import Console
+from rich.logging import RichHandler
+
+from .core.config import Config
+from .core.event_bus import EventBus
+from .core.models import Event, EventType
+from .data.feed import MarketDataFeed
+from .data.features import FeatureEngine
+from .data.store import DataStore
+from .data.scanner import MarketScanner
+from .strategy.ensemble import SignalEnsemble
+from .risk.manager import RiskManager
+from .execution.order_manager import OrderManager
+from .monitoring.alerts import TelegramAlerts
+from .monitoring.dashboard import CLIDashboard
+
+console = Console(force_terminal=True)
+logger = logging.getLogger(__name__)
+
+
+def setup_logging(level: str = "INFO"):
+    """Configure rich logging."""
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(
+            rich_tracebacks=True,
+            markup=True,
+            console=Console(force_terminal=True, stderr=True),
+        )],
+    )
+
+
+class TradingAgent:
+    """
+    Main trading agent orchestrator.
+    
+    Coordinates data fetching, strategy analysis, risk management,
+    order execution, and monitoring.
+    """
+
+    def __init__(self):
+        self.config = Config()
+        setup_logging(self.config.log_level)
+        
+        # Initialize components
+        self.feed = MarketDataFeed()
+        self.features = FeatureEngine()
+        self.store = DataStore()
+        self.ensemble = SignalEnsemble()
+        self.order_manager = OrderManager()
+        self.risk_manager = RiskManager()
+        self.alerts = TelegramAlerts()
+        self.dashboard = CLIDashboard()
+        self.bus = EventBus()
+        self.scanner = MarketScanner(self.feed)
+        
+        # Dynamic universe (starts with core, expanded by scanner)
+        self._active_symbols: list[str] = list(self.config.symbols)
+        self._last_scan_date: str = ""
+        
+        self._running = False
+        # Sync live equity from broker so position sizing is accurate
+        account = self.order_manager.broker.get_account()
+        live_equity = account.get("equity", 0)
+        if live_equity > 0:
+            self.config.set_live_equity(live_equity)
+            logger.info(f"Live equity synced: ${live_equity:,.2f}")
+
+        logger.info("Trading Agent initialized")
+
+    async def scan(self):
+        """
+        Run a single market scan:
+        1. Fetch latest data for all symbols
+        2. Compute features
+        3. Generate signals
+        4. Display results
+        """
+        console.print("\n[bold cyan]Scanning market...[/bold cyan]\n")
+        
+        symbols = self._active_symbols
+        logger.info(f"Scanning {len(symbols)} symbols")
+
+        # Fetch data
+        data = self.feed.get_bars_multi(symbols, days=self.config.lookback_days)
+        
+        if not data:
+            console.print("[red]No data available. Check your Alpaca API keys.[/red]")
+            return []
+
+        # Compute features
+        enriched = {}
+        for symbol, df in data.items():
+            enriched[symbol] = self.features.compute_all(df)
+
+        # Generate signals
+        signals = self.ensemble.scan_universe(enriched)
+
+        # Display
+        self.dashboard.show_signals(signals)
+
+        if signals:
+            console.print(f"\n[green]Found {len(signals)} actionable signal(s)[/green]")
+            for sig in signals:
+                console.print(f"  * {sig.action.value.upper()} {sig.symbol} "
+                            f"({sig.strategy}, confidence={sig.confidence:.0%})")
+        else:
+            console.print("\n[dim]No signals found in current scan[/dim]")
+
+        return signals
+
+    async def run_cycle(self):
+        """Run a single trading cycle: scan → risk check → execute."""
+        try:
+            signals = await self.scan()
+            
+            if signals:
+                await self.order_manager.process_signals(signals)
+                
+                # Send Telegram alerts for signals
+                for sig in signals:
+                    await self.alerts.notify_signal(sig)
+
+            # Check stop-losses on existing positions
+            await self.order_manager.check_stop_losses()
+
+            # Update dashboard
+            account = self.order_manager.broker.get_account()
+            positions = self.order_manager.broker.get_positions()
+            risk_status = self.risk_manager.status
+            self.dashboard.show_status(account, positions, risk_status)
+
+        except Exception as e:
+            logger.error(f"Error in trading cycle: {e}", exc_info=True)
+            await self.alerts.notify_error(str(e))
+
+    async def _run_scanner(self):
+        """Run the market-wide scanner to discover new trading candidates."""
+        from datetime import datetime
+        try:
+            console.print("\n[bold magenta]Running market-wide scanner...[/bold magenta]")
+            new_universe = await self.scanner.scan()
+            
+            if new_universe:
+                old_count = len(self._active_symbols)
+                self._active_symbols = new_universe
+                self._last_scan_date = datetime.now().strftime("%Y-%m-%d")
+                
+                new_symbols = [s for s in new_universe if s not in self.config.symbols]
+                console.print(
+                    f"[green]Scanner found {len(new_symbols)} new candidates. "
+                    f"Active universe: {len(self._active_symbols)} symbols[/green]"
+                )
+                
+                if new_symbols:
+                    logger.info(f"New symbols from scanner: {new_symbols[:20]}{'...' if len(new_symbols) > 20 else ''}")
+                    await self.alerts.send(
+                        f"Scanner found {len(new_symbols)} new stocks! "
+                        f"Total universe: {len(self._active_symbols)} symbols"
+                    )
+        except Exception as e:
+            logger.error(f"Scanner error (using core symbols): {e}")
+            # Fall back to core symbols on scanner failure
+            self._active_symbols = list(self.config.symbols)
+
+    async def run(self):
+        """
+        Start the trading agent in continuous mode.
+        Runs scans at configured intervals during market hours.
+        """
+        self._running = True
+        scan_interval = self.config.settings.get("schedule", {}).get("scan_interval_minutes", 60)
+        scanner_enabled = self.config.settings.get("scanner", {}).get("enabled", False)
+        
+        console.print(f"\n[bold green]Trading Agent started[/bold green]")
+        console.print(f"   Mode: {'PAPER' if self.config.is_paper else 'LIVE'}")
+        console.print(f"   Core Symbols: {self.config.symbols}")
+        console.print(f"   Market Scanner: {'ENABLED' if scanner_enabled else 'DISABLED'}")
+        console.print(f"   Scan interval: {scan_interval} minutes")
+        console.print(f"   Capital: ${self.config.initial_capital:.2f}")
+        console.print(f"\n   Press Ctrl+C to stop\n")
+
+        await self.alerts.send("Trading Agent started!")
+        
+        # Run market scanner on startup if enabled
+        if scanner_enabled:
+            await self._run_scanner()
+
+        while self._running:
+            try:
+                # Check if market is open
+                is_open = self.order_manager.broker.is_market_open()
+                
+                if is_open:
+                    # Run daily scanner if we haven't today
+                    if scanner_enabled:
+                        from datetime import datetime
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        if today != self._last_scan_date:
+                            await self._run_scanner()
+                    
+                    await self.run_cycle()
+                elif self.config.is_paper:
+                    # Paper mode: still run cycles when market is closed
+                    # so you can see the system work in real-time
+                    logger.info("Market closed — running scan in PAPER mode anyway")
+                    await self.run_cycle()
+                else:
+                    next_open = self.order_manager.broker.get_next_market_open()
+                    logger.info(f"Market closed. Next open: {next_open}")
+
+                # Wait for next cycle
+                await asyncio.sleep(scan_interval * 60)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait 1 min on error
+
+        console.print("\n[yellow]Trading Agent stopped[/yellow]")
+        await self.alerts.send("Trading Agent stopped")
+
+    def stop(self):
+        """Stop the agent gracefully."""
+        self._running = False
+
+    async def status(self):
+        """Show current account status and positions."""
+        account = self.order_manager.broker.get_account()
+        positions = self.order_manager.broker.get_positions()
+        risk_status = self.risk_manager.status
+        self.dashboard.show_status(account, positions, risk_status)
+
+    async def backtest(self, days: int = 365):
+        """Run a backtest on historical data."""
+        from .backtest.engine import BacktestEngine
+
+        console.print(f"\n[bold cyan]Running backtest ({days} days)...[/bold cyan]\n")
+
+        # Fetch historical data
+        data = self.feed.get_bars_multi(self.config.symbols, days=days)
+        
+        if not data:
+            console.print("[red]No data available for backtesting[/red]")
+            return
+
+        # Enrich with features first (needed for regime training)
+        enriched = {}
+        for symbol, df in data.items():
+            enriched[symbol] = self.features.compute_all(df)
+
+        # Train regime classifier on the historical data
+        console.print("[dim]Training ML regime classifier...[/dim]")
+        self.ensemble.train_classifier(enriched)
+
+        # Run backtest
+        engine = BacktestEngine(
+            initial_capital=self.config.initial_capital,
+            max_risk_per_trade=self.config.max_risk_per_trade,
+            max_position_size=self.config.max_position_size,
+            max_positions=self.config.max_open_positions,
+        )
+        
+        result = engine.run(data)
+        result.print_summary()
+        
+        return result
+
+    async def train(self, days: int = 365):
+        """Train the ML regime classifier on historical data."""
+        console.print(f"\n[bold cyan]Training ML regime classifier ({days} days)...[/bold cyan]\n")
+
+        data = self.feed.get_bars_multi(self.config.symbols, days=days)
+        
+        if not data:
+            console.print("[red]No data available for training[/red]")
+            return
+
+        enriched = {}
+        for symbol, df in data.items():
+            enriched[symbol] = self.features.compute_all(df)
+
+        success = self.ensemble.train_classifier(enriched)
+        
+        if success:
+            console.print("\n[bold green]Regime classifier trained and saved![/bold green]")
+            
+            # Show what regime each symbol is currently in
+            from rich.table import Table
+            from rich import box
+            
+            table = Table(title="Current Market Regimes", box=box.SIMPLE_HEAVY)
+            table.add_column("Symbol", style="bold")
+            table.add_column("Regime", style="cyan")
+            table.add_column("Strategy Weights")
+            
+            for symbol, df in enriched.items():
+                regime = self.ensemble.classifier.classify(df)
+                weights = self.ensemble.classifier.get_strategy_weights(regime)
+                weights_str = ", ".join([f"{k}={v:.1f}" for k, v in weights.items()])
+                
+                table.add_row(symbol, regime.value, weights_str)
+            
+            console.print(table)
+        else:
+            console.print("[yellow]Not enough data to train. Try with more history.[/yellow]")
+
+
+def main():
+    """CLI entry point."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="AI Trading Agent")
+    parser.add_argument(
+        "command",
+        choices=["scan", "run", "status", "backtest", "train"],
+        help="Command to execute",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=365,
+        help="Number of days for backtest/training (default: 365)",
+    )
+    
+    args = parser.parse_args()
+    
+    agent = TradingAgent()
+
+    # Handle Ctrl+C gracefully
+    def handle_signal(signum, frame):
+        agent.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, handle_signal)
+
+    if args.command == "scan":
+        asyncio.run(agent.scan())
+    elif args.command == "run":
+        asyncio.run(agent.run())
+    elif args.command == "status":
+        asyncio.run(agent.status())
+    elif args.command == "backtest":
+        asyncio.run(agent.backtest(days=args.days))
+    elif args.command == "train":
+        asyncio.run(agent.train(days=args.days))
+
+
+if __name__ == "__main__":
+    main()
