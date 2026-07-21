@@ -135,7 +135,7 @@ class MarketDataFeed:
                     symbol_df.columns = [c.lower() for c in symbol_df.columns]
                     result[symbol] = symbol_df
 
-                except (KeyError, Exception) as e:
+                except Exception as e:
                     logger.debug(f"No data for {symbol}: {e}")
 
             logger.info(f"Fetched data for {len(result)}/{len(symbols)} symbols")

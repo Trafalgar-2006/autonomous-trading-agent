@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ..core.config import Config
-from ..core.models import Signal, SignalAction, Order, Side, OrderType, Position
+from ..core.models import Signal, SignalAction, Order, Side, Position
 
 logger = logging.getLogger(__name__)
 
@@ -79,13 +79,16 @@ class RiskManager:
         else:
             self._consecutive_losses = 0
         
-        # Check circuit breakers
+        # Check circuit breakers — only LOSSES should trip them, never profits.
         equity = self.config.initial_capital  # Simplified; in production, use live equity
-        
-        if abs(self._daily_pnl) / equity > self.config.max_daily_loss:
+
+        daily_loss_pct = -self._daily_pnl / equity if equity > 0 else 0.0
+        weekly_loss_pct = -self._weekly_pnl / equity if equity > 0 else 0.0
+
+        if daily_loss_pct > self.config.max_daily_loss:
             self._activate_cooldown("daily loss limit exceeded")
-        
-        if abs(self._weekly_pnl) / equity > self.config.max_weekly_loss:
+
+        if weekly_loss_pct > self.config.max_weekly_loss:
             self._activate_cooldown("weekly loss limit exceeded")
         
         if self._consecutive_losses >= self.config.max_consecutive_losses:

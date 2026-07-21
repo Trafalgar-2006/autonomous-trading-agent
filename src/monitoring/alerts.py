@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 import aiohttp
 
@@ -86,3 +85,41 @@ class TelegramAlerts:
             f"Reason: {reason}\n"
         )
         await self.send(msg)
+
+    async def notify_eod_summary(
+        self,
+        account: dict,
+        positions: list,
+        risk_status: dict,
+        stats: dict,
+    ):
+        """Send an end-of-day summary: equity, open positions, P&L, risk state."""
+        equity = account.get("equity", 0) or 0
+        cash = account.get("cash", 0) or 0
+        open_pnl = sum(getattr(p, "unrealized_pnl", 0) or 0 for p in positions)
+
+        total_trades = stats.get("total_trades") or 0
+        wins = stats.get("wins") or 0
+        win_rate = (wins / total_trades) if total_trades else 0.0
+        total_pnl = stats.get("total_pnl") or 0.0
+
+        cooldown = risk_status.get("cooldown_active", False)
+
+        lines = [
+            "<b>End-of-Day Summary</b>",
+            f"Equity: ${equity:,.2f}",
+            f"Cash: ${cash:,.2f}",
+            f"Open positions: {len(positions)} (unrealized ${open_pnl:,.2f})",
+            f"Realized P&L (all-time): ${total_pnl:,.2f}",
+            f"Closed trades: {total_trades} | Win rate: {win_rate:.0%}",
+            f"Daily P&L: ${risk_status.get('daily_pnl', 0):,.2f}",
+            f"Circuit breaker: {'ACTIVE' if cooldown else 'OK'}",
+        ]
+        if positions:
+            lines.append("")
+            for p in positions[:15]:
+                pnl = getattr(p, "unrealized_pnl", 0) or 0
+                lines.append(f"  {p.symbol}: {p.quantity:.2f} @ ${p.entry_price:.2f} "
+                             f"(${pnl:,.2f})")
+
+        await self.send("\n".join(lines))

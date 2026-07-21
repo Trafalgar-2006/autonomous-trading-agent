@@ -37,16 +37,15 @@ if sys.platform == "win32":
 
 from rich.console import Console
 from rich.logging import RichHandler
+from rich import box
 
 from .core.config import Config
 from .core.event_bus import EventBus
-from .core.models import Event, EventType
 from .data.feed import MarketDataFeed
 from .data.features import FeatureEngine
 from .data.store import DataStore
 from .data.scanner import MarketScanner
 from .strategy.ensemble import SignalEnsemble
-from .risk.manager import RiskManager
 from .execution.order_manager import OrderManager
 from .monitoring.alerts import TelegramAlerts
 from .monitoring.dashboard import CLIDashboard
@@ -87,7 +86,10 @@ class TradingAgent:
         self.store = DataStore()
         self.ensemble = SignalEnsemble()
         self.order_manager = OrderManager()
-        self.risk_manager = RiskManager()
+        # Share the OrderManager's RiskManager so the dashboard reflects the
+        # SAME state (daily P&L, consecutive losses, circuit breaker) that the
+        # trade pipeline actually updates — not a second, always-empty instance.
+        self.risk_manager = self.order_manager.risk_manager
         self.alerts = TelegramAlerts()
         self.dashboard = CLIDashboard()
         self.bus = EventBus()
@@ -96,6 +98,7 @@ class TradingAgent:
         # Dynamic universe (starts with core, expanded by scanner)
         self._active_symbols: list[str] = list(self.config.symbols)
         self._last_scan_date: str = ""
+        self._last_daily_date: str = ""  # tracks daily EOD summary / perf refresh
         
         self._running = False
         # Sync live equity from broker so position sizing is accurate
@@ -104,6 +107,13 @@ class TradingAgent:
         if live_equity > 0:
             self.config.set_live_equity(live_equity)
             logger.info(f"Live equity synced: ${live_equity:,.2f}")
+
+        # Reconcile restored/open trades against what the broker actually holds
+        # so every live position has stop-loss protection from the first cycle.
+        self.order_manager.reconcile_open_trades()
+
+        # Learn strategy weights from realized trade history (down-weight losers).
+        self.ensemble.update_performance_weights(self.store)
 
         logger.info("Trading Agent initialized")
 
@@ -202,6 +212,38 @@ class TradingAgent:
             # Fall back to core symbols on scanner failure
             self._active_symbols = list(self.config.symbols)
 
+    async def _run_daily_tasks(self):
+        """
+        Once-per-calendar-day housekeeping:
+        - Refresh strategy performance weights from realized P&L.
+        - Send an end-of-day Telegram summary (for the day that just ended).
+        """
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today == self._last_daily_date:
+            return
+
+        first_run = self._last_daily_date == ""
+        self._last_daily_date = today
+
+        # Learn from realized performance every day.
+        self.ensemble.update_performance_weights(self.store)
+
+        # Summarize the prior day on rollover (skip the very first startup cycle).
+        if not first_run:
+            await self._send_eod_summary()
+
+    async def _send_eod_summary(self):
+        """Send an end-of-day account + performance summary via Telegram."""
+        try:
+            account = self.order_manager.broker.get_account()
+            positions = self.order_manager.broker.get_positions()
+            risk_status = self.risk_manager.status
+            stats = self.store.get_trade_stats()
+            await self.alerts.notify_eod_summary(account, positions, risk_status, stats)
+        except Exception as e:
+            logger.error(f"Failed to send EOD summary: {e}")
+
     async def run(self):
         """
         Start the trading agent in continuous mode.
@@ -227,9 +269,12 @@ class TradingAgent:
 
         while self._running:
             try:
+                # Daily housekeeping (perf weights refresh + EOD summary)
+                await self._run_daily_tasks()
+
                 # Check if market is open
                 is_open = self.order_manager.broker.is_market_open()
-                
+
                 if is_open:
                     # Run daily scanner if we haven't today
                     if scanner_enabled:
@@ -248,10 +293,14 @@ class TradingAgent:
                     next_open = self.order_manager.broker.get_next_market_open()
                     logger.info(f"Market closed. Next open: {next_open}")
 
-                # Wait for next cycle
-                await asyncio.sleep(scan_interval * 60)
+                # Wait for next cycle — chunked so shutdown (Ctrl+C sets
+                # _running=False) is responsive instead of blocking a full interval.
+                for _ in range(int(scan_interval * 60)):
+                    if not self._running:
+                        break
+                    await asyncio.sleep(1)
 
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, KeyboardInterrupt):
                 break
             except Exception as e:
                 logger.error(f"Error in main loop: {e}", exc_info=True)
@@ -270,6 +319,89 @@ class TradingAgent:
         positions = self.order_manager.broker.get_positions()
         risk_status = self.risk_manager.status
         self.dashboard.show_status(account, positions, risk_status)
+
+    async def doctor(self):
+        """
+        Health check: verify every external dependency the agent needs is
+        working before you trust it to trade. Never raises — reports per check.
+        """
+        from pathlib import Path
+        console.print("\n[bold cyan]Trading Agent — Health Check[/bold cyan]\n")
+        checks: list[tuple[str, bool, str]] = []
+
+        # 1. API keys present
+        has_keys = bool(self.config.alpaca_api_key and
+                        self.config.alpaca_api_key != "your_api_key_here")
+        checks.append(("Alpaca API keys configured", has_keys,
+                       "set ALPACA_API_KEY / ALPACA_SECRET_KEY in .env" if not has_keys else
+                       f"mode={'PAPER' if self.config.is_paper else 'LIVE'}"))
+
+        # 2. Broker reachable
+        try:
+            account = self.order_manager.broker.get_account()
+            ok = bool(account) and account.get("status") not in (None, "NO_API_KEYS")
+            detail = (f"equity=${account.get('equity', 0):,.2f}, status={account.get('status')}"
+                      if ok else "could not fetch account")
+            checks.append(("Broker reachable", ok, detail))
+        except Exception as e:
+            checks.append(("Broker reachable", False, str(e)))
+
+        # 3. Market data feed
+        try:
+            probe = self.feed.get_bars(self.config.symbols[0] if self.config.symbols else "SPY", days=10)
+            ok = probe is not None and not probe.empty
+            checks.append(("Market data feed", ok,
+                           f"fetched {len(probe)} bars" if ok else "no data returned"))
+        except Exception as e:
+            checks.append(("Market data feed", False, str(e)))
+
+        # 4. Database writable
+        try:
+            self.store.conn.execute("SELECT 1")
+            checks.append(("Database", True, self.config.db_path))
+        except Exception as e:
+            checks.append(("Database", False, str(e)))
+
+        # 5. Telegram
+        if self.alerts.enabled:
+            try:
+                import aiohttp
+                url = f"https://api.telegram.org/bot{self.alerts.bot_token}/getMe"
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                        j = await r.json()
+                ok = bool(j.get("ok"))
+                detail = f"@{j['result']['username']}" if ok else str(j.get("description"))
+                checks.append(("Telegram bot", ok, detail))
+            except Exception as e:
+                checks.append(("Telegram bot", False, str(e)))
+        else:
+            checks.append(("Telegram bot", True, "disabled (optional)"))
+
+        # 6. Regime model
+        model_exists = Path("data/regime_model.pkl").exists()
+        checks.append(("ML regime model", True,
+                       "trained model present" if model_exists else
+                       "not trained yet — run `train` (heuristic fallback active)"))
+
+        # Render
+        from rich.table import Table
+        table = Table(box=box.SIMPLE_HEAVY)
+        table.add_column("Check", style="bold")
+        table.add_column("Status")
+        table.add_column("Detail", style="dim")
+        all_ok = True
+        for name, ok, detail in checks:
+            if not ok:
+                all_ok = False
+            table.add_row(name, "[green]PASS[/green]" if ok else "[red]FAIL[/red]", str(detail))
+        console.print(table)
+
+        if all_ok:
+            console.print("\n[bold green]All checks passed — agent is ready.[/bold green]")
+        else:
+            console.print("\n[bold red]Some checks failed — resolve the FAILs above before running.[/bold red]")
+        return all_ok
 
     async def backtest(self, days: int = 365):
         """Run a backtest on historical data."""
@@ -353,7 +485,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",
-        choices=["scan", "run", "status", "backtest", "train"],
+        choices=["scan", "run", "status", "backtest", "train", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -362,24 +494,26 @@ def main():
         default=365,
         help="Number of days for backtest/training (default: 365)",
     )
-    
-    args = parser.parse_args()
-    
-    agent = TradingAgent()
 
-    # Handle Ctrl+C gracefully
-    def handle_signal(signum, frame):
-        agent.stop()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, handle_signal)
+    args = parser.parse_args()
+
+    agent = TradingAgent()
 
     if args.command == "scan":
         asyncio.run(agent.scan())
     elif args.command == "run":
+        # Graceful shutdown: Ctrl+C flips the running flag; the chunked sleep in
+        # run() notices within a second and exits cleanly (sends "stopped" alert).
+        def handle_signal(signum, frame):
+            console.print("\n[yellow]Shutdown requested — finishing current cycle...[/yellow]")
+            agent.stop()
+        signal.signal(signal.SIGINT, handle_signal)
         asyncio.run(agent.run())
     elif args.command == "status":
         asyncio.run(agent.status())
+    elif args.command == "doctor":
+        ok = asyncio.run(agent.doctor())
+        sys.exit(0 if ok else 1)
     elif args.command == "backtest":
         asyncio.run(agent.backtest(days=args.days))
     elif args.command == "train":

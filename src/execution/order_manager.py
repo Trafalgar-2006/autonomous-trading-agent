@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from ..core.config import Config
 from ..core.event_bus import EventBus
 from ..core.models import (
-    Event, EventType, Signal, SignalAction, Order, OrderStatus,
+    Event, EventType, Signal, SignalAction, OrderStatus,
     Trade, Side, Position, TradeOutcome,
 )
 from ..data.store import DataStore
 from ..risk.manager import RiskManager
+from ..risk.stops import compute_stop_level
 from .broker import AlpacaBroker
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,57 @@ class OrderManager:
         self.risk_manager = RiskManager()
         self.broker = AlpacaBroker()
         
-        # Track active trades (signal_id -> Trade)
+        # Track active trades (symbol -> Trade)
         self._active_trades: dict[str, Trade] = {}
-        
+
+        # Restore open trades persisted from a previous session so stop-loss /
+        # take-profit management survives restarts.
+        self._load_open_trades()
+
         logger.info("OrderManager initialized")
+
+    def _load_open_trades(self):
+        """Rehydrate still-open trades from the database into memory."""
+        try:
+            open_trades = self.store.get_open_trades()
+        except Exception as e:
+            logger.error(f"Failed to load open trades from store: {e}")
+            return
+        for t in open_trades:
+            # If multiple rows share a symbol, keep the latest (list is ordered
+            # by entry_time ascending, so the last write wins).
+            self._active_trades[t.symbol] = t
+        if self._active_trades:
+            logger.info(
+                f"Restored {len(self._active_trades)} open trade(s) from database: "
+                f"{list(self._active_trades.keys())}"
+            )
+
+    def reconcile_open_trades(self):
+        """
+        Reconcile in-memory trades with what the broker actually holds.
+
+        - Trades whose position was closed while the agent was offline are
+          dropped from tracking.
+        - Broker positions with no tracked trade are reconstructed so they still
+          get stop-loss protection.
+
+        Call once at startup (after the broker is reachable).
+        """
+        positions = self.broker.get_positions()
+        held = {p.symbol for p in positions}
+
+        for symbol in list(self._active_trades.keys()):
+            if symbol not in held:
+                logger.warning(
+                    f"Tracked trade {symbol} is no longer held at the broker "
+                    f"(closed while offline) — dropping from active tracking"
+                )
+                del self._active_trades[symbol]
+
+        for pos in positions:
+            if pos.symbol not in self._active_trades:
+                self._active_trades[pos.symbol] = self._reconstruct_trade(pos)
 
     async def process_signals(self, signals: list[Signal]):
         """
@@ -121,6 +168,15 @@ class OrderManager:
         # ── Record Trade ──────────────────────────────────────
 
         if signal.action == SignalAction.BUY:
+            # Persist stop/target context explicitly so trailing-stop and
+            # take-profit management works even for strategies that don't put
+            # them in `reasoning` (e.g. breakout) and survives a restart.
+            entry_reasoning = dict(signal.reasoning)
+            if signal.stop_loss:
+                entry_reasoning.setdefault("stop_loss", round(signal.stop_loss, 4))
+            if signal.take_profit:
+                entry_reasoning.setdefault("take_profit", round(signal.take_profit, 4))
+
             trade = Trade(
                 symbol=signal.symbol,
                 side=Side.BUY,
@@ -129,7 +185,7 @@ class OrderManager:
                 entry_price=signal.entry_price or 0,
                 quantity=order.quantity,
                 signal_id=signal.id,
-                entry_reasoning=signal.reasoning,
+                entry_reasoning=entry_reasoning,
             )
             self._active_trades[signal.symbol] = trade
             self.store.save_trade(trade)
@@ -153,16 +209,40 @@ class OrderManager:
                 self.risk_manager.update_daily_pnl(active_trade.pnl)
                 
                 del self._active_trades[signal.symbol]
-                
+
                 emoji = "WIN" if active_trade.outcome == TradeOutcome.WIN else "LOSS"
                 logger.info(
                     f"Trade closed ({emoji}): {signal.symbol} "
                     f"PnL=${active_trade.pnl:.4f} ({active_trade.pnl_pct:.2%}) "
                     f"[{active_trade.exit_reason}]"
                 )
-            
-            # Also close via broker
-            self.broker.close_position(signal.symbol)
+            # Note: the SELL order submitted above already liquidates the full
+            # position quantity, so we do NOT also call broker.close_position()
+            # here — doing so caused a redundant second sell order.
+
+    @staticmethod
+    def _reconstruct_trade(pos: Position) -> Trade:
+        """
+        Build a Trade record for a broker position we aren't tracking in memory.
+
+        Used so stop-loss / trailing-stop protection still applies to positions
+        opened in a previous session (or held before the agent started). Without
+        strategy context we fall back to a percentage-based stop (see
+        check_stop_losses, which defaults ATR to 2% of entry when absent).
+        """
+        logger.info(
+            f"Reconstructing untracked position for stop management: "
+            f"{pos.symbol} qty={pos.quantity:.4f} @ ${pos.entry_price:.2f}"
+        )
+        return Trade(
+            symbol=pos.symbol,
+            side=pos.side,
+            strategy="reconstructed",
+            entry_time=pos.entry_time,
+            entry_price=pos.entry_price,
+            quantity=pos.quantity,
+            entry_reasoning={},
+        )
 
     async def check_stop_losses(self):
         """
@@ -181,7 +261,11 @@ class OrderManager:
         for pos in positions:
             trade = self._active_trades.get(pos.symbol)
             if not trade:
-                continue
+                # Position exists at the broker but isn't tracked in memory
+                # (e.g. opened in a previous run, or held before this agent started).
+                # Reconstruct it so trailing stops / stop-losses still protect it.
+                trade = self._reconstruct_trade(pos)
+                self._active_trades[pos.symbol] = trade
 
             price = pos.current_price
             if price <= 0:
@@ -195,14 +279,6 @@ class OrderManager:
             atr = trade.entry_reasoning.get("atr", entry * 0.02)  # fallback 2%
             max_loss_pct = self.config.risk.get("stop_loss", {}).get("max_loss_pct", 0.05)
 
-            # ── Calculate dynamic stop level ──────────────────
-            hard_stop = entry * (1 - max_loss_pct)       # 5% hard cap
-            initial_stop = entry - (2.0 * atr)            # ATR-based stop
-            current_stop = max(hard_stop, initial_stop)   # Use the tighter one
-
-            profit = price - entry
-            profit_in_atr = profit / atr if atr > 0 else 0
-
             # Track high watermark for trailing
             high_key = f"_high_{pos.symbol}"
             high_watermark = getattr(self, high_key, entry)
@@ -210,15 +286,14 @@ class OrderManager:
                 high_watermark = price
                 setattr(self, high_key, high_watermark)
 
-            # Phase 1: After 1x ATR profit → move to breakeven
-            if profit_in_atr >= 1.0:
-                breakeven_stop = entry + (0.1 * atr)  # Tiny buffer above entry
-                current_stop = max(current_stop, breakeven_stop)
-
-            # Phase 2: After 2x ATR profit → trail at 1.5x ATR below high
-            if profit_in_atr >= 2.0:
-                trailing_stop = high_watermark - (1.5 * atr)
-                current_stop = max(current_stop, trailing_stop)
+            # Dynamic stop level (pure function — see risk/stops.py)
+            current_stop, profit_in_atr = compute_stop_level(
+                entry=entry,
+                price=price,
+                atr=atr,
+                high_watermark=high_watermark,
+                max_loss_pct=max_loss_pct,
+            )
 
             # ── Check stop-loss hit ───────────────────────────
             if price <= current_stop:

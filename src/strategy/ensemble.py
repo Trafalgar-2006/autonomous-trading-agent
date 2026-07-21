@@ -24,6 +24,22 @@ from .ml_classifier import RegimeClassifier
 logger = logging.getLogger(__name__)
 
 
+def performance_multiplier(stats: dict, min_trades: int = 10) -> float:
+    """
+    Map a strategy's realized performance to a weight multiplier in [0.5, 1.5].
+
+    Strategies with a strong win rate get up-weighted; poor performers get
+    down-weighted. Below ``min_trades`` closed trades there isn't enough
+    evidence, so the multiplier stays neutral (1.0).
+    """
+    trades = stats.get("trades", 0) or 0
+    if trades < min_trades:
+        return 1.0
+    win_rate = stats.get("win_rate", 0.5) or 0.0
+    # win_rate in [0,1] maps linearly to [0.5, 1.5]; 0.5 -> 1.0 (neutral).
+    return max(0.5, min(1.5, 0.5 + win_rate))
+
+
 class SignalEnsemble:
     """
     Aggregates signals from multiple strategies using weighted voting.
@@ -40,7 +56,11 @@ class SignalEnsemble:
         self.classifier = RegimeClassifier()
         self.current_regime: MarketRegime = MarketRegime.LOW_VOLATILITY
         self.regime_weights: dict[str, float] = {}
-        
+
+        # Per-strategy performance multipliers (learned from realized P&L).
+        # Default neutral until update_performance_weights() is called.
+        self.performance_weights: dict[str, float] = {}
+
         # Weekly trend cache: symbol -> {"bullish": bool, "rsi": float, "macd_bullish": bool}
         self._weekly_trends: dict[str, dict] = {}
         
@@ -149,6 +169,29 @@ class SignalEnsemble:
         """Train the regime classifier on enriched historical data."""
         return self.classifier.train(data)
 
+    def update_performance_weights(self, store, min_trades: int = 10):
+        """
+        Refresh per-strategy weight multipliers from realized trade history.
+
+        Call at startup and periodically (e.g. daily) so strategies that are
+        actually making money get more say, and losers get down-weighted.
+        """
+        try:
+            perf = store.get_strategy_performance()
+        except Exception as e:
+            logger.warning(f"Could not load strategy performance: {e}")
+            return
+
+        weights = {}
+        for strategy in self.strategies:
+            stats = perf.get(strategy.name, {})
+            weights[strategy.name] = performance_multiplier(stats, min_trades)
+
+        self.performance_weights = weights
+        if any(w != 1.0 for w in weights.values()):
+            logger.info(f"Strategy performance weights updated: "
+                        f"{ {k: round(v, 2) for k, v in weights.items()} }")
+
     def generate_signals(self, symbol: str, df: pd.DataFrame) -> list[Signal]:
         """
         Run all strategies on a symbol and return aggregated signals.
@@ -245,8 +288,9 @@ class SignalEnsemble:
 
         scored = []
         for sig in signals:
-            weight = strategy_weights.get(sig.strategy, 1.0)
-            score = sig.confidence * weight
+            base_weight = strategy_weights.get(sig.strategy, 1.0)
+            perf_weight = self.performance_weights.get(sig.strategy, 1.0)
+            score = sig.confidence * base_weight * perf_weight
             scored.append((score, sig))
 
         scored.sort(key=lambda x: x[0], reverse=True)
