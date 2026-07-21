@@ -130,8 +130,12 @@ class RegimeClassifier:
         features = features.dropna()
         return features
 
-    def train(self, data: dict[str, pd.DataFrame]) -> bool:
-        """Train the regime classifier on enriched historical data."""
+    def train(self, data: dict[str, pd.DataFrame], save: bool = True) -> bool:
+        """Train the regime classifier on enriched historical data.
+
+        Set save=False during walk-forward research so per-fold models don't
+        overwrite the production model on disk.
+        """
         all_features = []
         all_labels = []
 
@@ -180,8 +184,10 @@ class RegimeClassifier:
         accuracy = self.model.score(X_scaled, y)
         logger.info(f"Regime classifier trained: {len(X)} samples, accuracy={accuracy:.2%}")
 
-        # Save model
-        self._save_model()
+        # Save model (skipped during walk-forward research to avoid clobbering
+        # the production model).
+        if save:
+            self._save_model()
         return True
 
     def classify(self, df: pd.DataFrame) -> MarketRegime:
@@ -201,6 +207,54 @@ class RegimeClassifier:
         except Exception as e:
             logger.warning(f"ML classification failed: {e}")
             return self._heuristic_classify(df)
+
+    def classify_series(self, df: pd.DataFrame) -> dict:
+        """
+        Classify every bar at once (date -> MarketRegime).
+
+        Used by the research backtester to precompute regimes rather than
+        calling classify() once per bar. Uses the same model/scaler (or the
+        same heuristic) as classify(), so results are consistent.
+        """
+        out: dict = {}
+        if df is None or df.empty:
+            return out
+
+        # ── Model path ────────────────────────────────────────
+        if self.model is not None and self.scaler is not None:
+            feats = self._extract_features(df)
+            if feats is not None and not feats.empty:
+                try:
+                    preds = self.model.predict(self.scaler.transform(feats))
+                    for date, p in zip(feats.index, preds):
+                        out[date] = MarketRegime(p)
+                    return out
+                except Exception as e:
+                    logger.warning(f"Batch classification failed: {e}")
+
+        # ── Heuristic path (row-wise, matches _heuristic_classify) ──
+        returns = df["close"].pct_change()
+        ret_20d = df["close"].pct_change(20)
+        vol = returns.rolling(20).std() * np.sqrt(252)
+        adx = df["adx"] if "adx" in df.columns else pd.Series(20.0, index=df.index)
+        for date in df.index:
+            r = ret_20d.get(date)
+            v = vol.get(date)
+            a = adx.get(date)
+            r = r if pd.notna(r) else 0.0
+            v = v if pd.notna(v) else 0.2
+            a = a if pd.notna(a) else 20.0
+            if v > 0.4:
+                out[date] = MarketRegime.HIGH_VOLATILITY
+            elif v < 0.1:
+                out[date] = MarketRegime.LOW_VOLATILITY
+            elif r > 0.05 and a > 25:
+                out[date] = MarketRegime.TRENDING_UP
+            elif r < -0.05 and a > 25:
+                out[date] = MarketRegime.TRENDING_DOWN
+            else:
+                out[date] = MarketRegime.MEAN_REVERTING
+        return out
 
     def _heuristic_classify(self, df: pd.DataFrame) -> MarketRegime:
         """Fallback heuristic classification when ML model is unavailable."""

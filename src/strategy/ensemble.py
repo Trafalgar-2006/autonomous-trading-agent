@@ -165,9 +165,73 @@ class SignalEnsemble:
             logger.warning(f"Error computing weekly trend for {symbol}: {e}")
             self._weekly_trends[symbol] = {"bullish": True, "neutral": True}
 
-    def train_classifier(self, data: dict[str, pd.DataFrame]) -> bool:
+    def compute_weekly_trend_series(self, df: pd.DataFrame) -> dict:
+        """
+        Precompute the weekly-trend dict for every daily bar (date -> dict).
+
+        Uses only COMPLETED weeks (each daily bar sees the most recently closed
+        weekly bar, never its own in-progress week) so there is no intra-week
+        look-ahead. Used by the research backtester.
+        """
+        out: dict = {}
+        if df is None or df.empty or len(df) < 100:
+            return out
+        try:
+            weekly = df.resample("W").agg({
+                "open": "first", "high": "max", "low": "min",
+                "close": "last", "volume": "sum",
+            }).dropna()
+            if len(weekly) < 20:
+                return out
+
+            close = weekly["close"]
+            delta = close.diff()
+            gain = delta.where(delta > 0, 0.0).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
+            rs = gain / loss.replace(0, np.nan)
+            rsi = 100 - (100 / (1 + rs))
+
+            ema_12 = close.ewm(span=12, adjust=False).mean()
+            ema_26 = close.ewm(span=26, adjust=False).mean()
+            macd = ema_12 - ema_26
+            macd_sig = macd.ewm(span=9, adjust=False).mean()
+            macd_bull = macd > macd_sig
+
+            ema_10 = close.ewm(span=10, adjust=False).mean()
+            ema_40 = close.ewm(span=40, adjust=False).mean()
+            ema_aligned = ema_10 > ema_40
+
+            bull_count = (rsi > 50).astype(int) + macd_bull.astype(int) + ema_aligned.astype(int)
+            wk = pd.DataFrame({
+                "rsi": rsi,
+                "bullish": bull_count >= 2,
+                "bearish": bull_count == 0,
+            })
+
+            # Weekly index is labelled at each week's right edge (Sunday), which
+            # is in the future for intra-week days, so reindex+ffill naturally
+            # gives each daily bar the last COMPLETED week's values.
+            daily = wk.reindex(df.index, method="ffill")
+            for date, row in daily.iterrows():
+                if pd.isna(row["rsi"]):
+                    out[date] = {"bullish": True, "neutral": True}
+                else:
+                    b = bool(row["bullish"])
+                    br = bool(row["bearish"])
+                    out[date] = {
+                        "bullish": b,
+                        "bearish": br,
+                        "neutral": not b and not br,
+                        "rsi": round(float(row["rsi"]), 1),
+                    }
+            return out
+        except Exception as e:
+            logger.warning(f"Error computing weekly trend series: {e}")
+            return out
+
+    def train_classifier(self, data: dict[str, pd.DataFrame], save: bool = True) -> bool:
         """Train the regime classifier on enriched historical data."""
-        return self.classifier.train(data)
+        return self.classifier.train(data, save=save)
 
     def update_performance_weights(self, store, min_trades: int = 10):
         """
@@ -192,22 +256,38 @@ class SignalEnsemble:
             logger.info(f"Strategy performance weights updated: "
                         f"{ {k: round(v, 2) for k, v in weights.items()} }")
 
-    def generate_signals(self, symbol: str, df: pd.DataFrame) -> list[Signal]:
+    def generate_signals(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        weekly: Optional[dict] = None,
+        regime: Optional[MarketRegime] = None,
+    ) -> list[Signal]:
         """
         Run all strategies on a symbol and return aggregated signals.
-        
+
         Pipeline:
         1. Compute weekly trend (multi-timeframe filter)
         2. Detect current market regime (ML classifier)
         3. Run strategies with regime-adjusted weights
         4. Apply weekly trend filter to BUY signals
+
+        `weekly` and `regime` may be injected (precomputed) — the research
+        backtester does this to avoid recomputing them per bar. When omitted
+        they are computed here (the live path).
         """
         # Step 1: Weekly trend
-        self.compute_weekly_trend(symbol, df)
-        weekly = self._weekly_trends.get(symbol, {})
+        if weekly is None:
+            self.compute_weekly_trend(symbol, df)
+            weekly = self._weekly_trends.get(symbol, {})
 
-        # Step 2: Detect regime
-        self._detect_regime(df)
+        # Step 2: Regime + its strategy weights
+        if regime is None:
+            regime = self.classifier.classify(df)
+        regime_weights = self.classifier.get_strategy_weights(regime)
+        # keep instance state in sync for logging / scan_universe summaries
+        self.current_regime = regime
+        self.regime_weights = regime_weights
 
         signals: list[Signal] = []
 
@@ -216,13 +296,13 @@ class SignalEnsemble:
                 signal = strategy.analyze(symbol, df)
                 if signal and signal.action != SignalAction.HOLD:
                     # Apply regime-based weight adjustment
-                    regime_mult = self.regime_weights.get(strategy.name, 1.0)
+                    regime_mult = regime_weights.get(strategy.name, 1.0)
                     signal.confidence = min(1.0, signal.confidence * regime_mult)
-                    signal.regime = self.current_regime
-                    
+                    signal.regime = regime
+
                     # Add context to reasoning
                     if signal.reasoning:
-                        signal.reasoning["regime"] = self.current_regime.value
+                        signal.reasoning["regime"] = regime.value
                         signal.reasoning["regime_weight"] = regime_mult
                         signal.reasoning["weekly_trend"] = (
                             "bullish" if weekly.get("bullish")
@@ -230,7 +310,7 @@ class SignalEnsemble:
                             else "neutral"
                         )
                         signal.reasoning["weekly_rsi"] = weekly.get("rsi", 50)
-                    
+
                     signals.append(signal)
             except Exception as e:
                 logger.error(f"Error in strategy {strategy.name} for {symbol}: {e}")

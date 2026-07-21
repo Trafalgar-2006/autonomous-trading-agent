@@ -41,6 +41,7 @@ class BacktestResult:
     profit_factor: float = 0.0
     trades: list = field(default_factory=list)
     equity_curve: list = field(default_factory=list)
+    equity_dates: list = field(default_factory=list)
 
     def print_summary(self):
         """Print a formatted backtest summary."""
@@ -151,14 +152,38 @@ class BacktestEngine:
         qty_cash = (cash * (1 - self.cash_reserve_pct)) / fill_price
         return max(0.0, min(qty_risk, qty_max, qty_cash))
 
-    def run(self, data: dict[str, pd.DataFrame]) -> BacktestResult:
-        """Walk forward through history with next-bar-open execution."""
+    def _default_signal_fn(self, enriched: dict):
+        """Signal provider used when none is injected: scan the universe each bar."""
+        def fn(date):
+            window_data = {}
+            for symbol, df in enriched.items():
+                window = df[df.index <= date].tail(365)
+                if len(window) >= 30:
+                    window_data[symbol] = window
+            if not window_data:
+                return []
+            try:
+                return self.ensemble.scan_universe(window_data)
+            except Exception as e:
+                logger.debug(f"Signal generation failed at {date}: {e}")
+                return []
+        return fn
+
+    def run(self, data: dict[str, pd.DataFrame], signal_fn=None) -> BacktestResult:
+        """
+        Walk forward through history with next-bar-open execution.
+
+        `signal_fn(date) -> list[Signal]` can be injected to supply signals
+        (the research backtester passes a fast, precomputed provider). When
+        omitted, the default per-bar universe scan is used.
+        """
         cash = self.initial_capital
         equity = self.initial_capital
         positions: dict[str, dict] = {}      # symbol -> position dict
         pending: list[dict] = []             # orders queued to fill next bar's open
         trades: list[dict] = []
         equity_curve: list[float] = [equity]
+        equity_dates: list = [None]          # aligns with equity_curve
         peak_equity = equity
 
         # Enrich all data with features
@@ -179,6 +204,9 @@ class BacktestEngine:
             if df is None or date not in df.index:
                 return None
             return df.loc[date]
+
+        if signal_fn is None:
+            signal_fn = self._default_signal_fn(enriched)
 
         warmup = 60
         for i in range(warmup, len(dates)):
@@ -218,7 +246,7 @@ class BacktestEngine:
                     fill = self._sell_fill(open_price)
                     cash += pos["qty"] * fill - self._commission(pos["qty"])
                     pnl = (fill - pos["entry_price"]) * pos["qty"] - self._commission(pos["qty"])
-                    trades.append(self._record(symbol, "SELL", pos, fill, pnl))
+                    trades.append(self._record(symbol, "SELL", pos, fill, pnl, date))
                     del positions[symbol]
 
             pending = []  # queue consumed
@@ -248,43 +276,31 @@ class BacktestEngine:
                     fill = self._sell_fill(exit_price)
                     cash += pos["qty"] * fill - self._commission(pos["qty"])
                     pnl = (fill - pos["entry_price"]) * pos["qty"] - self._commission(pos["qty"])
-                    trades.append(self._record(symbol, action, pos, fill, pnl))
+                    trades.append(self._record(symbol, action, pos, fill, pnl, date))
                     del positions[symbol]
 
             # ── 3. Decide signals on this bar's close; queue for NEXT bar open ──
-            window_data = {}
-            for symbol, df in enriched.items():
-                window = df[df.index <= date].tail(365)
-                if len(window) >= 30:
-                    window_data[symbol] = window
-
-            if window_data:
-                try:
-                    signals = self.ensemble.scan_universe(window_data)
-                except Exception as e:
-                    logger.debug(f"Signal generation failed at {date}: {e}")
-                    signals = []
-
-                queued = {o["symbol"] for o in pending}
-                for signal in signals:
-                    sym = signal.symbol
-                    if sym in queued:
+            signals = signal_fn(date)
+            queued = {o["symbol"] for o in pending}
+            for signal in signals:
+                sym = signal.symbol
+                if sym in queued:
+                    continue
+                if signal.action == SignalAction.BUY and sym not in positions:
+                    if len(positions) + len(pending) >= self.max_positions:
                         continue
-                    if signal.action == SignalAction.BUY and sym not in positions:
-                        if len(positions) + len(pending) >= self.max_positions:
-                            continue
-                        pending.append({
-                            "symbol": sym,
-                            "action": "BUY",
-                            "strategy": signal.strategy,
-                            "stop_loss": signal.stop_loss,
-                            "take_profit": signal.take_profit,
-                            "atr": signal.reasoning.get("atr", 0.0),
-                        })
-                        queued.add(sym)
-                    elif signal.action == SignalAction.SELL and sym in positions:
-                        pending.append({"symbol": sym, "action": "SELL", "strategy": signal.strategy})
-                        queued.add(sym)
+                    pending.append({
+                        "symbol": sym,
+                        "action": "BUY",
+                        "strategy": signal.strategy,
+                        "stop_loss": signal.stop_loss,
+                        "take_profit": signal.take_profit,
+                        "atr": signal.reasoning.get("atr", 0.0),
+                    })
+                    queued.add(sym)
+                elif signal.action == SignalAction.SELL and sym in positions:
+                    pending.append({"symbol": sym, "action": "SELL", "strategy": signal.strategy})
+                    queued.add(sym)
 
             # ── 4. Mark-to-market at this bar's close ─────────────────────
             positions_value = 0.0
@@ -294,6 +310,7 @@ class BacktestEngine:
                     positions_value += pos["qty"] * float(row["close"])
             equity = cash + positions_value
             equity_curve.append(equity)
+            equity_dates.append(date)
             peak_equity = max(peak_equity, equity)
 
         # ── Close any remaining positions at the last available close ──────
@@ -310,12 +327,13 @@ class BacktestEngine:
             fill = self._sell_fill(last_price)
             cash += pos["qty"] * fill - self._commission(pos["qty"])
             pnl = (fill - pos["entry_price"]) * pos["qty"] - self._commission(pos["qty"])
-            trades.append(self._record(symbol, "EOD_CLOSE", pos, fill, pnl))
+            trades.append(self._record(symbol, "EOD_CLOSE", pos, fill, pnl, last_date))
 
-        return self._build_result(cash, trades, equity_curve)
+        return self._build_result(cash, trades, equity_curve, equity_dates)
 
     @staticmethod
-    def _record(symbol: str, action: str, pos: dict, exit_price: float, pnl: float) -> dict:
+    def _record(symbol: str, action: str, pos: dict, exit_price: float,
+                pnl: float, date=None) -> dict:
         return {
             "symbol": symbol,
             "action": action,
@@ -324,9 +342,11 @@ class BacktestEngine:
             "qty": pos["qty"],
             "pnl": pnl,
             "strategy": pos["strategy"],
+            "date": date,
         }
 
-    def _build_result(self, final_cash: float, trades: list[dict], equity_curve: list[float]) -> BacktestResult:
+    def _build_result(self, final_cash: float, trades: list[dict],
+                      equity_curve: list[float], equity_dates: list = None) -> BacktestResult:
         equity = final_cash
         total_return = equity - self.initial_capital
 
@@ -366,4 +386,5 @@ class BacktestEngine:
             profit_factor=gross_profit / gross_loss if gross_loss > 0 else 0.0,
             trades=trades,
             equity_curve=equity_curve,
+            equity_dates=equity_dates if equity_dates is not None else [],
         )

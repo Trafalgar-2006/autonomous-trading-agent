@@ -473,6 +473,31 @@ class TradingAgent:
         
         return result
 
+    async def walkforward(self, days: int = 1260):
+        """
+        Run a walk-forward, out-of-sample evaluation vs SPY buy-and-hold.
+
+        This is the honest 'is there any edge?' test. Uses the cached feed so
+        repeat runs don't re-hit the API.
+        """
+        from .data.cache import CachedFeed
+        from .research.walkforward import WalkForward
+
+        days = max(days, 1000)  # need enough history for train + test folds
+        console.print(f"\n[bold cyan]Walk-forward evaluation ({days} days of history)...[/bold cyan]")
+        console.print("[dim]Training regime model in-sample per fold, testing out-of-sample.[/dim]\n")
+
+        cached = CachedFeed(self.feed)
+        wf = WalkForward(
+            cached,
+            self.config.symbols,
+            initial_capital=self.config.initial_capital,
+            max_risk_per_trade=self.config.max_risk_per_trade,
+            max_position_size=self.config.max_position_size,
+            max_positions=self.config.max_open_positions,
+        )
+        return wf.run(total_days=days)
+
     async def train(self, days: int = 365):
         """Train the ML regime classifier on historical data."""
         console.print(f"\n[bold cyan]Training ML regime classifier ({days} days)...[/bold cyan]\n")
@@ -520,7 +545,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",
-        choices=["scan", "plan", "run", "status", "backtest", "train", "doctor"],
+        choices=["scan", "plan", "run", "status", "backtest", "train", "walkforward", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -555,6 +580,8 @@ def main():
         asyncio.run(agent.backtest(days=args.days))
     elif args.command == "train":
         asyncio.run(agent.train(days=args.days))
+    elif args.command == "walkforward":
+        asyncio.run(agent.walkforward(days=args.days))
 
 
 if __name__ == "__main__":

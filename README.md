@@ -61,6 +61,12 @@ python -m src.main doctor
 # One-shot market scan (no trades)
 python -m src.main scan
 
+# Decision memos: scan -> APPROVED / WATCHLIST / REJECTED plans (never executes)
+python -m src.main plan
+
+# Walk-forward, out-of-sample evaluation vs SPY buy-and-hold
+python -m src.main walkforward --days 1500
+
 # Start continuous paper trading (Ctrl+C for graceful shutdown)
 python -m src.main run
 
@@ -106,6 +112,30 @@ backtest smoke test.
 - **Paper Trading**: Alpaca paper trading with fractional shares
 - **Telegram Alerts**: signal / error / start-stop pings + daily end-of-day summary
 - **Backtesting**: next-bar-open execution (no look-ahead) with slippage + commission
+
+## Decision memos & execution mode
+
+Every actionable signal produces a structured **decision memo** — a full trade
+plan (entry / target / stop / invalidation / timeframe / risk:reward) with a
+verdict of **APPROVED**, **WATCHLIST** (a soft gate failed), or **REJECTED**
+(a hard risk rule blocked it). Memos are persisted to SQLite for an audit trail.
+
+`config/settings.yaml -> general.execution_mode`:
+- `auto` — the agent trades APPROVED signals automatically (default)
+- `propose` — the agent only produces memos; **a human executes** (seb.ai-style)
+
+## Research & validation (`src/research/`)
+
+`python -m src.main walkforward` runs a **walk-forward, out-of-sample** test: the
+regime model is trained only on past data in each fold, the strategies are run on
+the next unseen window, and the concatenated out-of-sample returns are compared
+head-to-head with **SPY buy-and-hold**. A disk cache (`data/cache/`) avoids
+re-fetching bars, and a precomputed-signal fast backtest keeps sweeps quick.
+
+> Current honest finding: across a multi-year out-of-sample test the ensemble did
+> **not** beat SPY buy-and-hold (roughly flat vs SPY's strongly positive return).
+> This is expected for classic TA on liquid large-caps — treat the system as a
+> research platform, not a money-maker, until a real edge is demonstrated.
 
 ## Notes on the backtest
 
