@@ -113,11 +113,29 @@ backtest smoke test.
 - **ML Regime Detection**: Random Forest classifies market into 5 regimes
 - **Weekly Trend Filter**: Multi-timeframe analysis gates daily signals
 - **Per-strategy feedback**: strategies are auto-weighted by realized P&L
-- **Risk Management**: Position sizing, exposure limits, trailing stops, circuit breakers
+- **AI Analyst**: Claude-powered morning brief + end-of-day narrative (the "2 daily messages")
+- **Risk Management**: sizing, exposure limits, trailing stops, circuit breakers, **correlation filter**
+- **Multi-asset ready**: equities + optional crypto (BTC/ETH) via Alpaca
 - **Restart-safe**: open trades persist to SQLite and are restored + reconciled on startup
 - **Paper Trading**: Alpaca paper trading with fractional shares
 - **Telegram Alerts**: signal / error / start-stop pings + daily end-of-day summary
 - **Backtesting**: next-bar-open execution (no look-ahead) with slippage + commission
+
+## Forward paper-test runbook
+
+The active strategy is `xs_momentum` (the config that beat SPY out-of-sample).
+To forward-test it on paper:
+
+```bash
+python -m src.main doctor    # confirm everything is wired
+python -m src.main run       # start the loop (rotates into 12-month momentum leaders)
+python -m src.main report    # check realized results vs the backtest over time
+```
+
+Watch `report` and the Telegram messages over weeks/months and compare to the
+~26% CAGR / ~30% drawdown backtest. Switch `general.strategy_mode` to `ensemble`
+in `config/settings.yaml` for the lower-drawdown TA config. Enable the AI Analyst
+by adding `ANTHROPIC_API_KEY` to `.env`.
 
 ## Decision memos & execution mode
 

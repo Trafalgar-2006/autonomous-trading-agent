@@ -125,6 +125,28 @@ def test_market_ok_true_still_approves():
     assert memo.status == DecisionStatus.APPROVED
 
 
+def test_correlation_filter_demotes_overconcentrated_long():
+    eng = DecisionEngine(RiskManager())
+    # Hold a position (40% of equity) highly correlated with the new BUY.
+    # Below the 80% total-exposure cap, but above the 30% correlated cap.
+    held = make_position("QQQ", qty=100.0, price=400.0)  # market_value 40k
+    corr = {"AAPL": {"QQQ": 0.95}}
+    memo = eng.build(make_signal(symbol="AAPL"), [held],
+                     equity=100_000.0, cash=100_000.0, correlations=corr)
+    # correlated exposure 40k/100k = 40% >= 30% limit -> WATCHLIST
+    assert memo.status == DecisionStatus.WATCHLIST
+    assert any("correlated exposure" in r for r in memo.reasons)
+
+
+def test_low_correlation_still_approves():
+    eng = DecisionEngine(RiskManager())
+    held = make_position("XOM", qty=100.0, price=100.0)
+    corr = {"AAPL": {"XOM": 0.1}}  # uncorrelated
+    memo = eng.build(make_signal(symbol="AAPL"), [held],
+                     equity=100_000.0, cash=100_000.0, correlations=corr)
+    assert memo.status == DecisionStatus.APPROVED
+
+
 def test_memo_renders_without_error():
     eng = DecisionEngine(RiskManager())
     memo = eng.build(make_signal(), [], 100_000.0, 100_000.0)

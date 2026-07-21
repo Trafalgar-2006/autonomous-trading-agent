@@ -83,11 +83,15 @@ class DecisionEngine:
         equity: float,
         cash: float,
         market_ok: bool = True,
+        correlations: Optional[dict] = None,
     ) -> DecisionMemo:
         """Evaluate a signal and produce a classified decision memo.
 
         `market_ok` is the SPY>SMA regime flag; when the market filter is on and
         this is False, new longs are demoted to WATCHLIST.
+
+        `correlations` is an optional {symbol: {symbol: corr}} map used to demote
+        a long that would over-concentrate correlated exposure.
         """
         entry = signal.entry_price
         stop = signal.stop_loss
@@ -145,6 +149,11 @@ class DecisionEngine:
         soft_reasons: list[str] = []
         if self.config.market_filter and not market_ok:
             soft_reasons.append(f"market filter: SPY below {self.config.market_filter_sma}-day SMA")
+
+        # Correlation filter: don't over-concentrate in highly-correlated names.
+        corr_reason = self._correlation_reason(signal, positions, equity, correlations)
+        if corr_reason:
+            soft_reasons.append(corr_reason)
         if rr is not None and rr < self.config.min_risk_reward - 1e-6:
             soft_reasons.append(f"R:R {rr:.2f} < min {self.config.min_risk_reward}")
         if rr is None:
@@ -164,6 +173,26 @@ class DecisionEngine:
             memo.reasons = ["passes risk, R:R and confidence gates"]
 
         return memo
+
+    def _correlation_reason(self, signal, positions, equity, correlations):
+        """Return a WATCHLIST reason if this long would over-concentrate
+        correlated exposure, else None."""
+        if not correlations or equity <= 0 or not positions:
+            return None
+        threshold = self.config.correlation_threshold
+        limit = self.config.max_correlated_exposure
+        row = correlations.get(signal.symbol, {})
+        correlated = [p for p in positions if row.get(p.symbol, 0.0) >= threshold]
+        if not correlated:
+            return None
+        correlated_value = sum(p.market_value for p in correlated)
+        new_value = (signal.entry_price or 0) * 0  # sizing added by risk; use held only
+        exposure = correlated_value / equity
+        if exposure >= limit:
+            names = ", ".join(p.symbol for p in correlated[:3])
+            return (f"correlated exposure {exposure:.0%} >= {limit:.0%} "
+                    f"(already holding {names})")
+        return None
 
     def _rejection_reason(self, signal: Signal, positions: list[Position],
                           equity: float) -> str:

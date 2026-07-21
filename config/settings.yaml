@@ -11,9 +11,18 @@ general:
   #   ensemble     = mean_reversion + breakout, with SPY>200SMA market filter (lower drawdown, does NOT beat SPY)
   #   xs_momentum  = 12-month cross-sectional momentum on a broad universe
   #                  (walk-forward BEAT SPY on CAGR/Sharpe/Sortino; ~30% drawdown)
-  strategy_mode: "ensemble"
+  # Set to xs_momentum to forward paper-test the edge; switch to ensemble for lower drawdown.
+  strategy_mode: "xs_momentum"
   timezone: "US/Eastern"
   log_level: "INFO"
+
+# AI Analyst — Claude-powered morning brief + EOD narrative (the "2 daily messages").
+# Optional: needs ANTHROPIC_API_KEY in .env; disables cleanly without it.
+ai_analyst:
+  enabled: true
+  model: "claude-opus-4-8"       # or claude-haiku-4-5 for cheaper/faster briefs
+  effort: "low"                  # low | medium | high (ignored for haiku)
+  explain_trades: false          # also generate a per-trade explanation (more API calls)
 
 # Cross-sectional momentum settings (used when strategy_mode = xs_momentum)
 cross_sectional:
@@ -21,6 +30,8 @@ cross_sectional:
   top_n: 8                       # number of top names to hold
   use_broad_universe: true       # rank the wider ~70-name research universe
   vol_target: null               # e.g. 0.25 to volatility-target (lowers drawdown, some return cost)
+  include_crypto: false          # also rank crypto (24/7; validate live execution separately)
+  crypto_symbols: ["BTC/USD", "ETH/USD"]
 
 # ============================================================
 # Universe — Core symbols (always monitored)

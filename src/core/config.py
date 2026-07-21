@@ -158,6 +158,14 @@ class Config:
         return self.risk.get("max_total_exposure", 0.70)
 
     @property
+    def max_correlated_exposure(self) -> float:
+        return self.risk.get("max_correlated_exposure", 0.30)
+
+    @property
+    def correlation_threshold(self) -> float:
+        return self.risk.get("correlation_threshold", 0.70)
+
+    @property
     def max_open_positions(self) -> int:
         return self.risk.get("max_open_positions", 5)
 

@@ -17,6 +17,7 @@ dependencies = [
     "rich>=13.0",
     "aiohttp>=3.9",
     "ta>=0.11",
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]

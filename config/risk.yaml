@@ -21,7 +21,8 @@ risk_management:
   # === Portfolio Limits ===
   max_total_exposure: 0.80       # Max 80% of capital deployed at once
   max_open_positions: 8          # Max 8 open positions simultaneously
-  max_correlated_exposure: 0.30  # Max 30% in correlated assets (e.g., all tech)
+  max_correlated_exposure: 0.30  # Max 30% across highly-correlated held names
+  correlation_threshold: 0.70    # Two names count as "correlated" above this return correlation
 
   # === Loss Limits (Circuit Breakers) ===
   max_daily_loss: 0.02           # Stop if daily loss > 2% ($2,004 at $100k)

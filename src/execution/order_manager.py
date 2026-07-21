@@ -95,7 +95,8 @@ class OrderManager:
             if pos.symbol not in self._active_trades:
                 self._active_trades[pos.symbol] = self._reconstruct_trade(pos)
 
-    async def process_signals(self, signals: list[Signal], market_ok: bool = True) -> list:
+    async def process_signals(self, signals: list[Signal], market_ok: bool = True,
+                              correlations: dict = None) -> list:
         """
         Process a batch of signals through the decision funnel:
         build a memo (APPROVED/WATCHLIST/REJECTED), persist it, and — only in
@@ -121,7 +122,8 @@ class OrderManager:
         for signal in signals:
             try:
                 memo = self.decision_engine.build(signal, positions, equity, cash,
-                                                  market_ok=market_ok)
+                                                  market_ok=market_ok,
+                                                  correlations=correlations)
                 self.store.save_decision(memo)
                 memos.append(memo)
 

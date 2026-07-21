@@ -50,6 +50,7 @@ from .strategy.ensemble import SignalEnsemble
 from .execution.order_manager import OrderManager
 from .monitoring.alerts import TelegramAlerts
 from .monitoring.dashboard import CLIDashboard
+from .monitoring.analyst import AIAnalyst
 
 console = Console(force_terminal=True)
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ class TradingAgent:
         self.risk_manager = self.order_manager.risk_manager
         self.alerts = TelegramAlerts()
         self.dashboard = CLIDashboard()
+        self.analyst = AIAnalyst()
         self.bus = EventBus()
         self.scanner = MarketScanner(self.feed)
         
@@ -111,11 +113,15 @@ class TradingAgent:
         if self.xs_strategy and self.config.xs.get("use_broad_universe", True):
             from .research.universe import BROAD_UNIVERSE
             self._active_symbols: list[str] = list(BROAD_UNIVERSE)
+            # Optionally rank crypto alongside equities (24/7 market).
+            if self.xs_strategy and self.config.xs.get("include_crypto", False):
+                self._active_symbols += list(self.config.xs.get("crypto_symbols", []))
         else:
             self._active_symbols: list[str] = list(self.config.symbols)
         self._last_scan_date: str = ""
         self._last_daily_date: str = ""  # tracks daily EOD summary / perf refresh
         self._market_ok: bool = True     # SPY>SMA regime flag (set each scan)
+        self._correlations: dict = {}    # pairwise return correlations (set each scan)
         
         self._running = False
         # Sync live equity from broker so position sizing is accurate
@@ -164,6 +170,9 @@ class TradingAgent:
         for symbol, df in data.items():
             enriched[symbol] = self.features.compute_all(df)
 
+        # Pairwise return correlations (for the correlation filter)
+        self._correlations = self._compute_correlations(data)
+
         # Generate signals (mode-dependent)
         if self.xs_strategy:
             # Cross-sectional momentum bypasses the SPY market filter (evidence).
@@ -187,6 +196,21 @@ class TradingAgent:
             console.print("\n[dim]No signals found in current scan[/dim]")
 
         return signals
+
+    def _compute_correlations(self, data: dict, window: int = 60) -> dict:
+        """Pairwise return correlations over the recent window: {sym: {sym: corr}}."""
+        try:
+            import pandas as pd
+            closes = {s: df["close"] for s, df in data.items()
+                      if df is not None and len(df) > 20}
+            if len(closes) < 2:
+                return {}
+            rets = pd.DataFrame(closes).pct_change().tail(window)
+            corr = rets.corr()
+            return {s: corr[s].to_dict() for s in corr.columns}
+        except Exception as e:
+            logger.debug(f"Correlation computation failed: {e}")
+            return {}
 
     def _compute_market_ok(self, data: dict) -> bool:
         """Is SPY above its configured SMA? Used by the market filter for longs."""
@@ -221,7 +245,8 @@ class TradingAgent:
         memos = []
         for signal in signals:
             memo = self.order_manager.decision_engine.build(
-                signal, positions, equity, cash, market_ok=self._market_ok)
+                signal, positions, equity, cash, market_ok=self._market_ok,
+                correlations=self._correlations)
             self.store.save_decision(memo)
             memos.append(memo)
 
@@ -238,13 +263,20 @@ class TradingAgent:
             signals = await self.scan()
             
             if signals:
-                memos = await self.order_manager.process_signals(signals, market_ok=self._market_ok)
+                memos = await self.order_manager.process_signals(
+                    signals, market_ok=self._market_ok, correlations=self._correlations)
 
                 # Show decision memos and alert on actionable ones.
                 self.dashboard.show_decisions(memos)
+                explain = self.analyst.settings.get("explain_trades", False)
                 for memo in memos:
                     if memo.status in (DecisionStatus.APPROVED, DecisionStatus.WATCHLIST):
                         await self.alerts.notify_decision(memo)
+                    # Optional plain-English explanation for approved trades.
+                    if explain and memo.status == DecisionStatus.APPROVED:
+                        why = await self.analyst.explain_decision(memo)
+                        if why:
+                            await self.alerts.send(f"<i>{memo.symbol}: {why}</i>")
 
             # Check stop-losses on existing positions
             await self.order_manager.check_stop_losses()
@@ -309,6 +341,9 @@ class TradingAgent:
         if not first_run:
             await self._send_eod_summary()
 
+        # Morning brief (the first of the "2 daily messages").
+        await self._send_morning_brief()
+
     async def _send_eod_summary(self):
         """Send an end-of-day account + performance summary via Telegram."""
         try:
@@ -317,8 +352,29 @@ class TradingAgent:
             risk_status = self.risk_manager.status
             stats = self.store.get_trade_stats()
             await self.alerts.notify_eod_summary(account, positions, risk_status, stats)
+
+            # AI narrative (the second of the "2 daily messages").
+            narrative = await self.analyst.eod_narrative(account, positions, risk_status, stats)
+            if narrative:
+                console.print(f"\n[bold cyan]AI Analyst — End of Day[/bold cyan]\n{narrative}\n")
+                await self.alerts.send(f"<b>AI Analyst — End of Day</b>\n{narrative}")
         except Exception as e:
             logger.error(f"Failed to send EOD summary: {e}")
+
+    async def _send_morning_brief(self):
+        """Send a Claude-generated morning brief via Telegram (if enabled)."""
+        if not self.analyst.enabled:
+            return
+        try:
+            account = self.order_manager.broker.get_account()
+            positions = self.order_manager.broker.get_positions()
+            decisions = self.store.get_decisions(limit=20)
+            brief = await self.analyst.morning_brief(account, positions, decisions)
+            if brief:
+                console.print(f"\n[bold cyan]AI Analyst — Morning Brief[/bold cyan]\n{brief}\n")
+                await self.alerts.send(f"<b>AI Analyst — Morning Brief</b>\n{brief}")
+        except Exception as e:
+            logger.error(f"Failed to send morning brief: {e}")
 
     async def run(self):
         """
@@ -504,6 +560,11 @@ class TradingAgent:
         checks.append(("ML regime model", True,
                        "trained model present" if model_exists else
                        "not trained yet — run `train` (heuristic fallback active)"))
+
+        # 7. AI Analyst
+        checks.append(("AI Analyst (Claude)", True,
+                       f"enabled ({self.analyst.model})" if self.analyst.enabled else
+                       "disabled (optional — set ANTHROPIC_API_KEY to enable)"))
 
         # Render
         from rich.table import Table
