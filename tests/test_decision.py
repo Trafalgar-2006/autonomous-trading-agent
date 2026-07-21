@@ -151,6 +151,24 @@ def test_low_correlation_still_approves():
     assert memo.status == DecisionStatus.APPROVED
 
 
+def test_sector_cap_demotes_concentrated_long():
+    eng = DecisionEngine(RiskManager())
+    # 45% of equity already in financials (cap is 40%) -> new bank goes WATCHLIST.
+    held = make_position("JPM", qty=450.0, price=100.0)  # $45k of $100k
+    memo = eng.build(make_signal(symbol="GS"), [held],
+                     equity=100_000.0, cash=100_000.0)
+    assert memo.status == DecisionStatus.WATCHLIST
+    assert any("sector" in r for r in memo.reasons)
+
+
+def test_different_sector_not_capped():
+    eng = DecisionEngine(RiskManager())
+    held = make_position("JPM", qty=450.0, price=100.0)
+    memo = eng.build(make_signal(symbol="XOM"), [held],
+                     equity=100_000.0, cash=100_000.0)
+    assert memo.status == DecisionStatus.APPROVED
+
+
 def test_memo_renders_without_error():
     eng = DecisionEngine(RiskManager())
     memo = eng.build(make_signal(), [], 100_000.0, 100_000.0)

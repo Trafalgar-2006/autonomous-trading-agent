@@ -176,6 +176,19 @@ class TradingAgent:
             console.print("[red]No data available. Check your Alpaca API keys.[/red]")
             return []
 
+        # Drop symbols whose data is broken (stale, zero prices, bad OHLC) —
+        # trading on known-bad data is worse than not trading the name.
+        from .data.quality import filter_tradeable
+        data, issues = filter_tradeable(data)
+        critical = [i for i in issues if i["severity"] == "critical"]
+        if critical:
+            logger.warning(f"Dropped {len(critical)} symbol(s) on data quality: "
+                           f"{[i['detail'] for i in critical[:5]]}")
+            console.print(f"[yellow]Data quality: dropped {len(critical)} symbol(s)[/yellow]")
+        if not data:
+            console.print("[red]All symbols failed data-quality checks.[/red]")
+            return []
+
         # Compute features
         enriched = {}
         for symbol, df in data.items():
@@ -328,6 +341,8 @@ class TradingAgent:
             # Update dashboard + persist a snapshot (drives the web equity curve)
             account = self.order_manager.broker.get_account()
             positions = self.order_manager.broker.get_positions()
+            # Trailing equity stop — checks drawdown from peak equity.
+            self.risk_manager.update_equity(account.get("equity", 0) or 0)
             risk_status = self.risk_manager.status
             self.dashboard.show_status(account, positions, risk_status)
             self.store.save_snapshot(account, positions, risk_status)
@@ -545,6 +560,36 @@ class TradingAgent:
             console.print("[dim]No closed trades yet — let the paper run accumulate "
                           "a track record, then compare to the backtest.[/dim]")
         return stats
+
+    async def ask(self, question: str):
+        """Answer a natural-language question over the agent's own audit log."""
+        if not self.analyst.enabled:
+            console.print("[yellow]AI Analyst disabled — set ANTHROPIC_API_KEY in .env[/yellow]")
+            return None
+        if not question:
+            console.print("[yellow]Ask something, e.g. "
+                          '--question "why did we skip NVDA?"[/yellow]')
+            return None
+        console.print(f"\n[bold cyan]Q:[/bold cyan] {question}\n")
+        answer = await self.analyst.answer(
+            question, self.store.get_decisions(limit=60), self.store.get_trades(limit=40))
+        console.print(answer or "[dim]No answer (the log may be empty).[/dim]")
+        return answer
+
+    async def review(self):
+        """LLM post-mortem over recently closed trades."""
+        if not self.analyst.enabled:
+            console.print("[yellow]AI Analyst disabled — set ANTHROPIC_API_KEY in .env[/yellow]")
+            return None
+        closed = [t for t in self.store.get_trades(limit=100)
+                  if t.get("outcome") not in (None, "open")]
+        if not closed:
+            console.print("[dim]No closed trades to review yet.[/dim]")
+            return None
+        console.print(f"\n[bold cyan]Reviewing {len(closed)} closed trades...[/bold cyan]\n")
+        text = await self.analyst.post_mortem(closed)
+        console.print(text or "[dim]No review produced.[/dim]")
+        return text
 
     async def doctor(self):
         """
@@ -775,7 +820,7 @@ def main():
     parser.add_argument(
         "command",
         choices=["scan", "plan", "run", "status", "report", "dashboard", "backtest",
-                 "train", "walkforward", "experiments", "doctor"],
+                 "train", "walkforward", "experiments", "ask", "review", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -783,6 +828,12 @@ def main():
         type=int,
         default=365,
         help="Number of days for backtest/training (default: 365)",
+    )
+    parser.add_argument(
+        "--question",
+        type=str,
+        default="",
+        help='Question for the `ask` command, e.g. --question "why did we skip NVDA?"',
     )
 
     args = parser.parse_args()
@@ -817,6 +868,10 @@ def main():
         asyncio.run(agent.status())
     elif args.command == "report":
         asyncio.run(agent.report())
+    elif args.command == "ask":
+        asyncio.run(agent.ask(args.question))
+    elif args.command == "review":
+        asyncio.run(agent.review())
     elif args.command == "doctor":
         ok = asyncio.run(agent.doctor())
         sys.exit(0 if ok else 1)

@@ -170,6 +170,16 @@ class Config:
         return self.risk.get("max_adv_pct", 0.01)
 
     @property
+    def max_sector_exposure(self) -> float:
+        """Max fraction of equity concentrated in a single sector."""
+        return self.risk.get("max_sector_exposure", 0.40)
+
+    @property
+    def max_drawdown_pct(self) -> float:
+        """Trailing equity stop: halt trading beyond this drawdown from peak."""
+        return self.risk.get("max_drawdown_pct", 0.25)
+
+    @property
     def max_open_positions(self) -> int:
         return self.risk.get("max_open_positions", 5)
 

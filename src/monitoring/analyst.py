@@ -101,6 +101,51 @@ def build_eod_prompt(account: dict, positions: list, risk_status: dict, stats: d
     return "\n".join(lines)
 
 
+def build_postmortem_prompt(trades: list[dict]) -> str:
+    """Prompt for a review of recently closed trades."""
+    lines = [
+        "Review these closed trades. In 3-5 bullets: what patterns show up in "
+        "the winners vs the losers, and one concrete, testable suggestion. "
+        "Judge only from the data shown — do not assume facts not present.",
+        "",
+    ]
+    for t in trades[:25]:
+        lines.append(
+            f"  - {t.get('symbol')}: {t.get('strategy')} | "
+            f"entry ${t.get('entry_price', 0):.2f} -> exit ${t.get('exit_price', 0):.2f} | "
+            f"P&L ${t.get('pnl', 0):.2f} | exit: {t.get('exit_reason')}"
+        )
+    return "\n".join(lines)
+
+
+def build_query_prompt(question: str, decisions: list[dict], trades: list[dict]) -> str:
+    """Prompt for a natural-language question over the agent's own audit log."""
+    lines = [
+        "Answer the user's question using ONLY the agent's decision and trade "
+        "log below. If the log doesn't contain the answer, say so plainly "
+        "rather than guessing.",
+        "",
+        f"QUESTION: {question}",
+        "",
+        "RECENT DECISIONS:",
+    ]
+    for d in decisions[:40]:
+        rr = f"{d['risk_reward']:.2f}" if d.get("risk_reward") else "n/a"
+        lines.append(
+            f"  - {d.get('timestamp', '')[:19]} {d.get('status', '').upper()} "
+            f"{d.get('action', '').upper()} {d.get('symbol')} "
+            f"({d.get('strategy')}, R:R {rr}) — {d.get('reasons')}"
+        )
+    lines.append("")
+    lines.append("RECENT TRADES:")
+    for t in trades[:25]:
+        lines.append(
+            f"  - {t.get('symbol')}: {t.get('strategy')} P&L ${t.get('pnl', 0):.2f} "
+            f"({t.get('outcome')}, {t.get('exit_reason')})"
+        )
+    return "\n".join(lines)
+
+
 class AIAnalyst:
     """Claude-backed narrative generator (optional, graceful without a key)."""
 
@@ -150,3 +195,15 @@ class AIAnalyst:
 
     async def eod_narrative(self, account, positions, risk_status, stats) -> str | None:
         return await self._complete(build_eod_prompt(account, positions, risk_status, stats))
+
+    async def post_mortem(self, trades: list[dict]) -> str | None:
+        """Review closed trades for patterns worth testing."""
+        if not trades:
+            return None
+        return await self._complete(build_postmortem_prompt(trades), max_tokens=1200)
+
+    async def answer(self, question: str, decisions: list[dict],
+                     trades: list[dict]) -> str | None:
+        """Answer a natural-language question over the agent's own audit log."""
+        return await self._complete(
+            build_query_prompt(question, decisions, trades), max_tokens=1200)

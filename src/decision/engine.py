@@ -158,6 +158,12 @@ class DecisionEngine:
         corr_reason = self._correlation_reason(signal, positions, equity, correlations)
         if corr_reason:
             soft_reasons.append(corr_reason)
+
+        # Sector cap: correlation catches co-moving names, this catches
+        # thematic concentration even when correlations look tame.
+        sector_reason = self._sector_reason(signal, positions, equity)
+        if sector_reason:
+            soft_reasons.append(sector_reason)
         if rr is not None and rr < self.config.min_risk_reward - 1e-6:
             soft_reasons.append(f"R:R {rr:.2f} < min {self.config.min_risk_reward}")
         if rr is None:
@@ -197,6 +203,21 @@ class DecisionEngine:
             names = ", ".join(p.symbol for p in correlated[:3])
             return (f"correlated exposure {exposure:.0%} >= {limit:.0%} "
                     f"(already holding {names})")
+        return None
+
+    def _sector_reason(self, signal, positions, equity):
+        """WATCHLIST reason if this long would breach the sector cap, else None."""
+        from ..risk.portfolio import sector_exposure_for, sector_of
+
+        limit = self.config.max_sector_exposure
+        if not limit or equity <= 0 or not positions:
+            return None
+        sector = sector_of(signal.symbol)
+        if sector == "other":
+            return None  # unknown sector — don't guess at concentration
+        exposure = sector_exposure_for(signal.symbol, positions, equity)
+        if exposure >= limit:
+            return f"sector '{sector}' exposure {exposure:.0%} >= {limit:.0%}"
         return None
 
     def _rejection_reason(self, signal: Signal, positions: list[Position],

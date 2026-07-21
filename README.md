@@ -73,6 +73,13 @@ python -m src.main experiments --days 2600
 # Forward paper-test report (realized performance vs backtest, from the DB)
 python -m src.main report
 
+# Live web dashboard (equity curve, positions, decisions, slippage, risk)
+python -m src.main dashboard
+
+# AI Analyst (needs ANTHROPIC_API_KEY)
+python -m src.main review                              # LLM post-mortem on closed trades
+python -m src.main ask --question "why did we skip NVDA?"   # NL query over the decision log
+
 # Start continuous paper trading (Ctrl+C for graceful shutdown)
 python -m src.main run
 
@@ -120,6 +127,38 @@ backtest smoke test.
 - **Paper Trading**: Alpaca paper trading with fractional shares
 - **Telegram Alerts**: signal / error / start-stop pings + daily end-of-day summary
 - **Backtesting**: next-bar-open execution (no look-ahead) with slippage + commission
+
+## Running it 24/7 (Docker)
+
+```bash
+cp .env.example .env      # add your keys
+docker compose up -d      # agent + dashboard, restart on crash/reboot
+docker compose logs -f agent
+# dashboard: http://localhost:8501
+```
+
+**Liveness & safety**
+- The agent writes `data/heartbeat.txt` each cycle; Docker's `HEALTHCHECK` uses it.
+- `python -m src.ops.watchdog` (run hourly from cron/Task Scheduler) sends a
+  Telegram alert if the agent stops completing cycles, and one when it recovers.
+- **Kill switch:** `touch data/KILL` flattens every position and halts the agent.
+- Config is validated at startup — it refuses to run on percent-typos
+  (`0.10` vs `10`), unknown strategy modes, or incoherent risk limits.
+
+## Security & key hygiene
+
+- Secrets live only in `.env` (gitignored, never committed, never baked into
+  the Docker image — it's injected via `env_file`).
+- Use **paper** keys for anything that isn't a validated live system, and
+  scope live keys to trading only. Rotate them if they ever appear in a log,
+  screenshot, or shell history.
+- The container runs as a **non-root** user and mounts `config/` read-only;
+  the dashboard mounts `data/` read-only and never places orders.
+- Built-in broker guards: exponential backoff on rate limits/5xx, a
+  **Pattern Day Trader** guard (refuses new longs at 3+ day-trades on a
+  sub-$25k account), and a block on trading if the broker flags the account.
+- Going live from India involves LRS/overseas-investment rules and an
+  Alpaca-eligibility question — settle that before flipping `ALPACA_PAPER`.
 
 ## Forward paper-test runbook
 

@@ -116,6 +116,11 @@ class AlpacaBroker:
             logger.error("Cannot submit order: No API keys configured")
             return order
 
+        # Refuse to open new risk when the account is blocked or PDT-limited.
+        if order.side == Side.BUY and self._is_pdt_blocked():
+            order.status = OrderStatus.REJECTED
+            return order
+
         try:
             alpaca_side = OrderSide.BUY if order.side == Side.BUY else OrderSide.SELL
 
@@ -145,7 +150,7 @@ class AlpacaBroker:
                         time_in_force=TimeInForce.DAY,
                     )
 
-            result = self.client.submit_order(request)
+            result = self._submit_with_backoff(request)
 
             order.broker_order_id = str(result.id)
             order.status = OrderStatus.SUBMITTED
@@ -164,6 +169,58 @@ class AlpacaBroker:
             order.status = OrderStatus.REJECTED
             logger.error(f"Order error: {e}")
             return order
+
+    def _submit_with_backoff(self, request, attempts: int = 3, base_delay: float = 1.0):
+        """
+        Submit with exponential backoff on rate limits / transient 5xx.
+
+        Only retries errors that are actually transient — a rejected order
+        (insufficient funds, bad symbol) is re-raised immediately rather than
+        hammered, because retrying it will never succeed.
+        """
+        import time
+
+        last_error = None
+        for attempt in range(attempts):
+            try:
+                return self.client.submit_order(request)
+            except APIError as e:
+                message = str(e).lower()
+                transient = ("rate limit" in message or "429" in message
+                             or "too many" in message or "503" in message
+                             or "internal" in message or "timeout" in message)
+                last_error = e
+                if not transient or attempt == attempts - 1:
+                    raise
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Transient broker error ({e}) — retrying in {delay:.0f}s")
+                time.sleep(delay)
+        # Unreachable in practice (the loop returns or raises), but keeps the
+        # function total rather than falling through with None.
+        raise last_error or RuntimeError("order submission failed")
+
+    def _is_pdt_blocked(self) -> bool:
+        """
+        Pattern Day Trader guard.
+
+        Under-$25k margin accounts are limited to 3 day-trades in 5 business
+        days; a 4th can freeze the account for 90 days. We stop before that
+        rather than letting the broker reject (or worse, accept) the trade.
+        """
+        try:
+            account = self.get_account()
+            if account.get("trading_blocked") or account.get("account_blocked"):
+                logger.error("Broker reports the account is blocked — refusing to trade")
+                return True
+            equity = float(account.get("equity", 0) or 0)
+            day_trades = int(account.get("day_trade_count", 0) or 0)
+            if equity < 25_000 and day_trades >= 3:
+                logger.error(f"PDT guard: {day_trades} day-trades on a "
+                             f"${equity:,.0f} account — refusing to trade")
+                return True
+        except Exception as e:
+            logger.debug(f"PDT check skipped: {e}")
+        return False
 
     def get_order(self, broker_order_id: str) -> dict:
         """

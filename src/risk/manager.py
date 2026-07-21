@@ -42,6 +42,11 @@ class RiskManager:
         self._consecutive_losses: int = 0
         self._cooldown_until: datetime | None = None
 
+        # Trailing equity stop: track the high-water mark of account equity so
+        # a slow bleed (which never trips a single-day loss limit) still halts.
+        self._peak_equity: float = 0.0
+        self._current_equity: float = 0.0
+
         logger.info("RiskManager initialized")
 
     @property
@@ -51,9 +56,38 @@ class RiskManager:
             "daily_pnl": self._daily_pnl,
             "weekly_pnl": self._weekly_pnl,
             "consecutive_losses": self._consecutive_losses,
+            "drawdown": self.drawdown,
+            "peak_equity": self._peak_equity,
             "cooldown_active": self._cooldown_until is not None and datetime.utcnow() < self._cooldown_until,
             "cooldown_until": str(self._cooldown_until) if self._cooldown_until else None,
         }
+
+    def update_equity(self, equity: float) -> float:
+        """
+        Track account equity and enforce the trailing equity stop.
+
+        A series of small losses can drain the account without ever breaching a
+        daily/weekly limit; this catches that. Returns the current drawdown.
+        """
+        from .portfolio import equity_drawdown
+
+        if equity is None or equity <= 0:
+            return 0.0
+        self._current_equity = equity
+        self._peak_equity = max(self._peak_equity, equity)
+
+        drawdown = equity_drawdown(equity, self._peak_equity)
+        limit = self.config.max_drawdown_pct
+        if limit and drawdown > limit:
+            self._activate_cooldown(
+                f"trailing equity stop: {drawdown:.1%} drawdown from peak "
+                f"${self._peak_equity:,.0f} (limit {limit:.0%})")
+        return drawdown
+
+    @property
+    def drawdown(self) -> float:
+        from .portfolio import equity_drawdown
+        return equity_drawdown(self._current_equity, self._peak_equity)
 
     def update_daily_pnl(self, pnl: float):
         """Update daily P&L tracker after a trade closes."""
