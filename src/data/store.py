@@ -43,6 +43,13 @@ class DataStore:
 
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # WAL lets the dashboard read concurrently while the agent writes,
+        # and survives an ungraceful shutdown far better than the default.
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception as e:
+            logger.warning(f"Could not enable WAL mode: {e}")
 
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS trades (
@@ -190,6 +197,37 @@ class DataStore:
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving trade: {e}")
+
+    def save_snapshot(self, account: dict, positions: list, risk_status: dict) -> None:
+        """Persist a portfolio snapshot (drives the dashboard's equity curve)."""
+        try:
+            equity = account.get("equity", 0) or 0
+            cash = account.get("cash", 0) or 0
+            positions_value = sum(getattr(p, "market_value", 0) or 0 for p in positions)
+            self.conn.execute(
+                "INSERT INTO portfolio_snapshots (timestamp, cash, equity, positions_value, "
+                "open_positions, daily_pnl, total_pnl) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    datetime.utcnow().isoformat(),
+                    cash,
+                    equity,
+                    positions_value,
+                    len(positions),
+                    risk_status.get("daily_pnl", 0.0),
+                    sum(getattr(p, "unrealized_pnl", 0) or 0 for p in positions),
+                ),
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving snapshot: {e}")
+
+    def get_snapshots(self, limit: int = 2000) -> list[dict]:
+        """Recent portfolio snapshots, oldest first (for charting)."""
+        cursor = self.conn.execute(
+            "SELECT * FROM portfolio_snapshots ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        rows = [dict(r) for r in cursor.fetchall()]
+        return list(reversed(rows))
 
     def save_decision(self, memo) -> None:
         """Persist a DecisionMemo for the audit trail."""

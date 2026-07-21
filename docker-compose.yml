@@ -1,0 +1,33 @@
+# Always-on agent + dashboard.
+#   docker compose up -d          # start both
+#   docker compose logs -f agent  # follow the agent
+# Secrets come from .env (never baked into the image).
+
+services:
+  agent:
+    build: .
+    container_name: trading-agent
+    restart: unless-stopped          # survives crashes and host reboots
+    env_file: .env
+    volumes:
+      - ./data:/app/data             # SQLite DB, model, cache, heartbeat
+      - ./config:/app/config:ro      # config is read-only at runtime
+    command: ["python", "-m", "src.main", "run"]
+
+  dashboard:
+    build: .
+    container_name: trading-dashboard
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data:ro          # dashboard is read-only
+      - ./config:/app/config:ro
+    command:
+      - streamlit
+      - run
+      - src/dashboard/app.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true

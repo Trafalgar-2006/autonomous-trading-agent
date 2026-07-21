@@ -81,6 +81,17 @@ class TradingAgent:
     def __init__(self):
         self.config = Config()
         setup_logging(self.config.log_level)
+
+        # Fail fast on dangerous/nonsensical config before touching the broker.
+        from .core.validate import validate_config
+        errors, warnings_ = validate_config(self.config)
+        for w in warnings_:
+            console.print(f"[yellow]Config warning:[/yellow] {w}")
+            logger.warning(f"Config warning: {w}")
+        if errors:
+            for e in errors:
+                console.print(f"[bold red]Config error:[/bold red] {e}")
+            raise SystemExit("Invalid configuration — fix config/ before starting.")
         
         # Initialize components
         self.feed = MarketDataFeed()
@@ -197,6 +208,37 @@ class TradingAgent:
 
         return signals
 
+    def _check_kill_switch(self) -> bool:
+        """
+        Emergency stop: if `data/KILL` exists, flatten everything and halt.
+
+        Lets you stop the agent from anywhere you can touch the filesystem
+        (ssh, `docker exec`, a mounted volume) without racing the process.
+        """
+        from pathlib import Path
+        kill = Path("data/KILL")
+        if not kill.exists():
+            return False
+        logger.critical("KILL SWITCH engaged (data/KILL present) — flattening and stopping")
+        console.print("\n[bold red]KILL SWITCH ENGAGED — closing all positions[/bold red]")
+        try:
+            self.order_manager.emergency_close_all()
+        except Exception as e:
+            logger.error(f"Emergency close failed: {e}")
+        self._running = False
+        return True
+
+    def _write_heartbeat(self):
+        """Touch a heartbeat file each cycle so a watchdog can detect a dead agent."""
+        try:
+            from pathlib import Path
+            from datetime import datetime as _dt
+            hb = Path("data/heartbeat.txt")
+            hb.parent.mkdir(parents=True, exist_ok=True)
+            hb.write_text(_dt.utcnow().isoformat())
+        except Exception as e:
+            logger.debug(f"Heartbeat write failed: {e}")
+
     def _compute_correlations(self, data: dict, window: int = 60) -> dict:
         """Pairwise return correlations over the recent window: {sym: {sym: corr}}."""
         try:
@@ -281,11 +323,13 @@ class TradingAgent:
             # Check stop-losses on existing positions
             await self.order_manager.check_stop_losses()
 
-            # Update dashboard
+            # Update dashboard + persist a snapshot (drives the web equity curve)
             account = self.order_manager.broker.get_account()
             positions = self.order_manager.broker.get_positions()
             risk_status = self.risk_manager.status
             self.dashboard.show_status(account, positions, risk_status)
+            self.store.save_snapshot(account, positions, risk_status)
+            self._write_heartbeat()
 
         except Exception as e:
             logger.error(f"Error in trading cycle: {e}", exc_info=True)
@@ -405,6 +449,10 @@ class TradingAgent:
 
         while self._running:
             try:
+                # Emergency stop takes priority over everything else.
+                if self._check_kill_switch():
+                    break
+
                 # Daily housekeeping (perf weights refresh + EOD summary)
                 await self._run_daily_tasks()
 
@@ -725,7 +773,8 @@ def main():
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",
-        choices=["scan", "plan", "run", "status", "report", "backtest", "train", "walkforward", "experiments", "doctor"],
+        choices=["scan", "plan", "run", "status", "report", "dashboard", "backtest",
+                 "train", "walkforward", "experiments", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -736,6 +785,18 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # The dashboard is a separate Streamlit process — launch it before touching
+    # the broker (no agent instance needed).
+    if args.command == "dashboard":
+        import subprocess
+        from pathlib import Path
+        app_path = Path(__file__).parent / "dashboard" / "app.py"
+        console.print(f"\n[bold cyan]Launching dashboard...[/bold cyan] {app_path}")
+        console.print("[dim]Press Ctrl+C to stop. It opens in your browser.[/dim]\n")
+        raise SystemExit(subprocess.call(
+            [sys.executable, "-m", "streamlit", "run", str(app_path)]
+        ))
 
     agent = TradingAgent()
 
