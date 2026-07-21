@@ -152,10 +152,28 @@ sizing, cross-sectional top-N) side-by-side against SPY.
 > - **cross-sectional momentum** had the highest raw return (7.4% CAGR) but the
 >   highest drawdown (34%) — kept as a research option, not adopted.
 >
-> Even improved, the system still does **not** beat SPY buy-and-hold. The adopted
-> changes are about **not blowing up** while the search for a real edge continues.
-> Treat it as a research platform, not a money-maker, until an edge is proven and
-> confirmed by 3–6 months of forward paper trading (`python -m src.main report`).
+> The TA ensemble still does **not** beat SPY buy-and-hold — its adopted changes
+> are about **not blowing up**.
+
+### Cross-sectional momentum (`strategy_mode: xs_momentum`)
+
+Ranking a broad (~70-name) universe by **12-month trailing return** and holding
+the top 8 — the classic momentum factor — was the **first configuration to beat
+SPY buy-and-hold out-of-sample** on a walk-forward test (2019–2026):
+
+| Config (broad universe, OOS) | CAGR | Sharpe | Sortino | Max DD |
+|---|---|---|---|---|
+| SPY buy & hold | 12.4% | 0.77 | 1.05 | 25.4% |
+| **XS 12-month momentum (top 8)** | **26.4%** | **0.78** | **1.95** | 30.3% |
+| XS 12-month + vol target | 12.9% | 0.59 | 1.57 | 20.4% |
+
+Robust across 10–14 month lookbacks. Enable it in `config/settings.yaml`:
+`general.strategy_mode: xs_momentum`.
+
+> **Honest caveats:** this is one ~7-year window that excludes the 2009 momentum
+> crash; drawdown is ~30% (tameable to ~20% via `cross_sectional.vol_target`);
+> momentum is high-turnover and crowded. Promising and evidence-backed, but
+> **paper-trade it for months** (`python -m src.main report`) before trusting it.
 
 ## Notes on the backtest
 

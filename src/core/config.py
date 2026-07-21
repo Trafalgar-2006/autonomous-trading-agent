@@ -91,6 +91,15 @@ class Config:
         return self._settings.get("general", {}).get("execution_mode", "auto").lower()
 
     @property
+    def strategy_mode(self) -> str:
+        """'ensemble' (TA strategies) or 'xs_momentum' (cross-sectional momentum)."""
+        return self._settings.get("general", {}).get("strategy_mode", "ensemble").lower()
+
+    @property
+    def xs(self) -> dict:
+        return self._settings.get("cross_sectional", {})
+
+    @property
     def db_path(self) -> str:
         return self._settings.get("database", {}).get("path", "data/trading.db")
 

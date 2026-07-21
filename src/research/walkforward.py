@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-import pandas as pd
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -119,10 +118,12 @@ class WalkForward:
                 s: df[(df.index >= train_start) & (df.index < test_start)]
                 for s, df in trade_data.items()
             }
-            enriched_train = {s: self.features.compute_all(df)
-                              for s, df in train_slice.items() if len(df) > 60}
-            if enriched_train:
-                ensemble.train_classifier(enriched_train, save=False)
+            # Cross-sectional momentum doesn't use the regime model — skip training.
+            if not self.experiment.xs_momentum:
+                enriched_train = {s: self.features.compute_all(df)
+                                  for s, df in train_slice.items() if len(df) > 60}
+                if enriched_train:
+                    ensemble.train_classifier(enriched_train, save=False)
 
             # OUT-OF-SAMPLE test window (with warmup buffer for indicators).
             test_slice = {

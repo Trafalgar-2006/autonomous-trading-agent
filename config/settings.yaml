@@ -7,8 +7,20 @@ general:
   version: "0.2.0"
   mode: "paper"                  # paper | live
   execution_mode: "auto"         # auto = trade APPROVED signals | propose = memos only, human executes
+  # Strategy engine:
+  #   ensemble     = mean_reversion + breakout, with SPY>200SMA market filter (lower drawdown, does NOT beat SPY)
+  #   xs_momentum  = 12-month cross-sectional momentum on a broad universe
+  #                  (walk-forward BEAT SPY on CAGR/Sharpe/Sortino; ~30% drawdown)
+  strategy_mode: "ensemble"
   timezone: "US/Eastern"
   log_level: "INFO"
+
+# Cross-sectional momentum settings (used when strategy_mode = xs_momentum)
+cross_sectional:
+  lookback_days: 252             # ~12 months trailing return to rank on
+  top_n: 8                       # number of top names to hold
+  use_broad_universe: true       # rank the wider ~70-name research universe
+  vol_target: null               # e.g. 0.25 to volatility-target (lowers drawdown, some return cost)
 
 # ============================================================
 # Universe — Core symbols (always monitored)

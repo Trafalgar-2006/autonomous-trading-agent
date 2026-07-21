@@ -115,9 +115,12 @@ def build_fast_signal_fn(
     pos_index: dict[str, dict] = {}
 
     for sym, df in enriched.items():
-        weekly_map[sym] = ensemble.compute_weekly_trend_series(df)
-        regime_map[sym] = ensemble.classifier.classify_series(df)
         pos_index[sym] = {d: i for i, d in enumerate(df.index)}
+        # Cross-sectional momentum ignores per-symbol strategy signals, so skip
+        # the (expensive) weekly-trend and regime precompute for it.
+        if not exp.xs_momentum:
+            weekly_map[sym] = ensemble.compute_weekly_trend_series(df)
+            regime_map[sym] = ensemble.classifier.classify_series(df)
 
     def signal_fn(date):
         if trade_start is not None and date < trade_start:

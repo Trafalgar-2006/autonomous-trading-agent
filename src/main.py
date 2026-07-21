@@ -96,8 +96,23 @@ class TradingAgent:
         self.bus = EventBus()
         self.scanner = MarketScanner(self.feed)
         
+        # Strategy mode: 'ensemble' (TA) or 'xs_momentum' (cross-sectional momentum)
+        self.xs_strategy = None
+        if self.config.strategy_mode == "xs_momentum":
+            from .strategy.xs_momentum import CrossSectionalMomentum
+            xs = self.config.xs
+            self.xs_strategy = CrossSectionalMomentum(
+                lookback=xs.get("lookback_days", 252),
+                top_n=xs.get("top_n", 8),
+                vol_target=xs.get("vol_target"),
+            )
+
         # Dynamic universe (starts with core, expanded by scanner)
-        self._active_symbols: list[str] = list(self.config.symbols)
+        if self.xs_strategy and self.config.xs.get("use_broad_universe", True):
+            from .research.universe import BROAD_UNIVERSE
+            self._active_symbols: list[str] = list(BROAD_UNIVERSE)
+        else:
+            self._active_symbols: list[str] = list(self.config.symbols)
         self._last_scan_date: str = ""
         self._last_daily_date: str = ""  # tracks daily EOD summary / perf refresh
         self._market_ok: bool = True     # SPY>SMA regime flag (set each scan)
@@ -130,11 +145,16 @@ class TradingAgent:
         console.print("\n[bold cyan]Scanning market...[/bold cyan]\n")
         
         symbols = self._active_symbols
-        logger.info(f"Scanning {len(symbols)} symbols")
+        logger.info(f"Scanning {len(symbols)} symbols ({self.config.strategy_mode} mode)")
+
+        # Cross-sectional momentum needs enough history for its lookback.
+        fetch_days = self.config.lookback_days
+        if self.xs_strategy:
+            fetch_days = max(fetch_days, self.xs_strategy.lookback + 120)
 
         # Fetch data
-        data = self.feed.get_bars_multi(symbols, days=self.config.lookback_days)
-        
+        data = self.feed.get_bars_multi(symbols, days=fetch_days)
+
         if not data:
             console.print("[red]No data available. Check your Alpaca API keys.[/red]")
             return []
@@ -144,11 +164,16 @@ class TradingAgent:
         for symbol, df in data.items():
             enriched[symbol] = self.features.compute_all(df)
 
-        # Market-regime filter flag: is SPY above its SMA? (for the market filter)
-        self._market_ok = self._compute_market_ok(data)
-
-        # Generate signals
-        signals = self.ensemble.scan_universe(enriched)
+        # Generate signals (mode-dependent)
+        if self.xs_strategy:
+            # Cross-sectional momentum bypasses the SPY market filter (evidence).
+            self._market_ok = True
+            held = {p.symbol for p in self.order_manager.broker.get_positions()}
+            signals = self.xs_strategy.build_signals(enriched, held=held)
+        else:
+            # Market-regime filter flag: is SPY above its SMA? (ensemble only)
+            self._market_ok = self._compute_market_ok(data)
+            signals = self.ensemble.scan_universe(enriched)
 
         # Display
         self.dashboard.show_signals(signals)
@@ -306,6 +331,8 @@ class TradingAgent:
         
         console.print(f"\n[bold green]Trading Agent started[/bold green]")
         console.print(f"   Mode: {'PAPER' if self.config.is_paper else 'LIVE'}")
+        console.print(f"   Strategy: {self.config.strategy_mode.upper()}"
+                      + (f" (12-mo XS momentum, top {self.xs_strategy.top_n})" if self.xs_strategy else ""))
         console.print(f"   Execution: {self.config.execution_mode.upper()} "
                       f"({'auto-trades APPROVED signals' if self.config.execution_mode == 'auto' else 'proposes only — human executes'})")
         console.print(f"   Core Symbols: {self.config.symbols}")
