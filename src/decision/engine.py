@@ -82,8 +82,13 @@ class DecisionEngine:
         positions: list[Position],
         equity: float,
         cash: float,
+        market_ok: bool = True,
     ) -> DecisionMemo:
-        """Evaluate a signal and produce a classified decision memo."""
+        """Evaluate a signal and produce a classified decision memo.
+
+        `market_ok` is the SPY>SMA regime flag; when the market filter is on and
+        this is False, new longs are demoted to WATCHLIST.
+        """
         entry = signal.entry_price
         stop = signal.stop_loss
         target = signal.take_profit
@@ -138,6 +143,8 @@ class DecisionEngine:
         # Use a small tolerance so a setup sitting exactly at the threshold
         # (e.g. momentum's natural 3xATR/2xATR = 1.5) isn't split by float noise.
         soft_reasons: list[str] = []
+        if self.config.market_filter and not market_ok:
+            soft_reasons.append(f"market filter: SPY below {self.config.market_filter_sma}-day SMA")
         if rr is not None and rr < self.config.min_risk_reward - 1e-6:
             soft_reasons.append(f"R:R {rr:.2f} < min {self.config.min_risk_reward}")
         if rr is None:

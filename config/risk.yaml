@@ -13,6 +13,11 @@ risk_management:
   min_risk_reward: 1.5           # Below this reward:risk -> WATCHLIST instead of APPROVED
   strong_confidence: 0.60        # Below this confidence -> WATCHLIST instead of APPROVED
 
+  # === Adaptive filters (walk-forward validated 2019-2026, incl. 2022 bear) ===
+  market_filter: true            # only open NEW longs when SPY > its SMA (halved drawdown)
+  market_filter_sma: 200         # robust across 150/200/250 in the stability sweep
+  vol_target: 0.20               # volatility-target sizing (annualized); null to disable
+
   # === Portfolio Limits ===
   max_total_exposure: 0.80       # Max 80% of capital deployed at once
   max_open_positions: 8          # Max 8 open positions simultaneously

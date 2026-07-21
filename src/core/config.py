@@ -178,6 +178,20 @@ class Config:
         """Confidence at/above which a setup is considered strong enough to auto-trade."""
         return self.risk.get("strong_confidence", 0.6)
 
+    @property
+    def market_filter(self) -> bool:
+        """Only open new longs when SPY is above its SMA (validated risk reducer)."""
+        return bool(self.risk.get("market_filter", False))
+
+    @property
+    def market_filter_sma(self) -> int:
+        return int(self.risk.get("market_filter_sma", 200))
+
+    @property
+    def vol_target(self):
+        """Annualized per-position volatility target for sizing (None = disabled)."""
+        return self.risk.get("vol_target", None)
+
     def get(self, key: str, default: Any = None) -> Any:
         """Generic getter with dot notation (e.g., 'general.mode')."""
         keys = key.split(".")

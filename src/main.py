@@ -100,6 +100,7 @@ class TradingAgent:
         self._active_symbols: list[str] = list(self.config.symbols)
         self._last_scan_date: str = ""
         self._last_daily_date: str = ""  # tracks daily EOD summary / perf refresh
+        self._market_ok: bool = True     # SPY>SMA regime flag (set each scan)
         
         self._running = False
         # Sync live equity from broker so position sizing is accurate
@@ -143,6 +144,9 @@ class TradingAgent:
         for symbol, df in data.items():
             enriched[symbol] = self.features.compute_all(df)
 
+        # Market-regime filter flag: is SPY above its SMA? (for the market filter)
+        self._market_ok = self._compute_market_ok(data)
+
         # Generate signals
         signals = self.ensemble.scan_universe(enriched)
 
@@ -158,6 +162,19 @@ class TradingAgent:
             console.print("\n[dim]No signals found in current scan[/dim]")
 
         return signals
+
+    def _compute_market_ok(self, data: dict) -> bool:
+        """Is SPY above its configured SMA? Used by the market filter for longs."""
+        if not self.config.market_filter:
+            return True
+        spy = data.get("SPY")
+        if spy is None or spy.empty:
+            return True  # permissive when unknown
+        sma = self.config.market_filter_sma
+        if len(spy) < sma:
+            return True
+        ma = spy["close"].rolling(sma).mean().iloc[-1]
+        return bool(spy["close"].iloc[-1] > ma)
 
     async def plan(self):
         """
@@ -178,7 +195,8 @@ class TradingAgent:
 
         memos = []
         for signal in signals:
-            memo = self.order_manager.decision_engine.build(signal, positions, equity, cash)
+            memo = self.order_manager.decision_engine.build(
+                signal, positions, equity, cash, market_ok=self._market_ok)
             self.store.save_decision(memo)
             memos.append(memo)
 
@@ -195,7 +213,7 @@ class TradingAgent:
             signals = await self.scan()
             
             if signals:
-                memos = await self.order_manager.process_signals(signals)
+                memos = await self.order_manager.process_signals(signals, market_ok=self._market_ok)
 
                 # Show decision memos and alert on actionable ones.
                 self.dashboard.show_decisions(memos)
@@ -355,6 +373,47 @@ class TradingAgent:
         risk_status = self.risk_manager.status
         self.dashboard.show_status(account, positions, risk_status)
 
+    async def report(self):
+        """
+        Forward-test report: realized performance from the live/paper DB, so you
+        can compare actual results to the backtest expectation over time.
+        """
+        from rich.table import Table
+
+        stats = self.store.get_trade_stats()
+        decisions = self.store.get_decisions(limit=500)
+        account = self.order_manager.broker.get_account()
+
+        total = stats.get("total_trades") or 0
+        wins = stats.get("wins") or 0
+        losses = stats.get("losses") or 0
+        total_pnl = stats.get("total_pnl") or 0.0
+        win_rate = (wins / total) if total else 0.0
+
+        t = Table(title="Forward Paper-Test Report", box=box.ROUNDED)
+        t.add_column("Metric", style="bold")
+        t.add_column("Value", justify="right")
+        t.add_row("Account equity", f"${account.get('equity', 0):,.2f}")
+        t.add_row("Closed trades", str(total))
+        t.add_row("Win rate", f"{win_rate:.0%}")
+        t.add_row("Wins / Losses", f"{wins} / {losses}")
+        t.add_row("Realized P&L", f"${total_pnl:,.2f}")
+        t.add_row("Best trade", f"${stats.get('best_trade') or 0:,.2f}")
+        t.add_row("Worst trade", f"${stats.get('worst_trade') or 0:,.2f}")
+        console.print(t)
+
+        # Decision funnel counts
+        from collections import Counter
+        counts = Counter(d["status"] for d in decisions)
+        console.print(f"\n[dim]Decisions logged: {len(decisions)} "
+                      f"(APPROVED={counts.get('approved',0)}, "
+                      f"WATCHLIST={counts.get('watchlist',0)}, "
+                      f"REJECTED={counts.get('rejected',0)})[/dim]")
+        if total == 0:
+            console.print("[dim]No closed trades yet — let the paper run accumulate "
+                          "a track record, then compare to the backtest.[/dim]")
+        return stats
+
     async def doctor(self):
         """
         Health check: verify every external dependency the agent needs is
@@ -507,21 +566,21 @@ class TradingAgent:
         from .research.walkforward import compare_experiments
         from .research.experiment import ExperimentConfig
 
-        days = max(days, 1000)
+        days = max(days, 2400)  # ~6.5y so folds span the 2022 bear, not just bull
         console.print(f"\n[bold cyan]Strategy experiment comparison ({days} days)...[/bold cyan]\n")
 
+        base = ("mean_reversion", "breakout")  # momentum excluded (loses money)
         cached = CachedFeed(self.feed)
         exps = [
-            ExperimentConfig(name="baseline"),
-            ExperimentConfig(name="no_momentum", disabled_strategies=("momentum",)),
-            ExperimentConfig(name="+market_filter",
-                             disabled_strategies=("momentum",), market_filter=True),
-            ExperimentConfig(name="+vol_target",
-                             disabled_strategies=("momentum",), market_filter=True,
-                             vol_target=0.20),
-            ExperimentConfig(name="+xsectional_top5",
-                             disabled_strategies=("momentum",), market_filter=True,
-                             vol_target=0.20, cross_sectional_top=5),
+            ExperimentConfig(name="with_momentum",
+                             strategies=("momentum", "mean_reversion", "breakout")),
+            ExperimentConfig(name="no_momentum", strategies=base),
+            ExperimentConfig(name="+market_filter_only", strategies=base, market_filter=True),
+            ExperimentConfig(name="+vol_target_only", strategies=base, vol_target=0.20),
+            ExperimentConfig(name="+xsectional_only", strategies=base, cross_sectional_top=5),
+            ExperimentConfig(name="vol+market", strategies=base, market_filter=True, vol_target=0.20),
+            ExperimentConfig(name="xs_momentum", strategies=base, xs_momentum=True,
+                             xs_lookback=120, xs_top=6),
         ]
         return compare_experiments(
             cached, self.config.symbols, exps, total_days=days,
@@ -578,7 +637,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",
-        choices=["scan", "plan", "run", "status", "backtest", "train", "walkforward", "experiments", "doctor"],
+        choices=["scan", "plan", "run", "status", "report", "backtest", "train", "walkforward", "experiments", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -606,6 +665,8 @@ def main():
         asyncio.run(agent.run())
     elif args.command == "status":
         asyncio.run(agent.status())
+    elif args.command == "report":
+        asyncio.run(agent.report())
     elif args.command == "doctor":
         ok = asyncio.run(agent.doctor())
         sys.exit(0 if ok else 1)

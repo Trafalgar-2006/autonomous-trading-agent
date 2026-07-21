@@ -20,12 +20,18 @@ import pandas as pd
 @dataclass
 class ExperimentConfig:
     name: str = "baseline"
+    strategies: Optional[tuple] = None   # explicit set (overrides config `enabled`)
     disabled_strategies: tuple = ()
     market_filter: bool = False
     market_sma: int = 200
     vol_target: Optional[float] = None          # annualized per-position vol target
     vol_mult_bounds: tuple = (0.5, 2.0)
     cross_sectional_top: Optional[int] = None   # keep top-N BUYs per day
+    # Cross-sectional momentum: ignore per-symbol strategy signals; instead rank
+    # the whole universe by trailing return and long the top names.
+    xs_momentum: bool = False
+    xs_lookback: int = 120                       # bars of trailing return to rank on
+    xs_top: int = 6                              # number of top names to hold
     tags: dict = field(default_factory=dict)
 
 

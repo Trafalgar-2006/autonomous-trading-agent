@@ -106,6 +106,25 @@ def test_invalidation_uses_donchian_low_for_breakout():
     assert memo.invalidation == 90.0
 
 
+def test_market_filter_demotes_long_to_watchlist():
+    eng = DecisionEngine(RiskManager())
+    if not eng.config.market_filter:
+        import pytest
+        pytest.skip("market filter disabled in config")
+    # Strong setup, but SPY below its SMA -> WATCHLIST, not APPROVED.
+    memo = eng.build(make_signal(), positions=[], equity=100_000.0, cash=100_000.0,
+                     market_ok=False)
+    assert memo.status == DecisionStatus.WATCHLIST
+    assert any("market filter" in r for r in memo.reasons)
+
+
+def test_market_ok_true_still_approves():
+    eng = DecisionEngine(RiskManager())
+    memo = eng.build(make_signal(), positions=[], equity=100_000.0, cash=100_000.0,
+                     market_ok=True)
+    assert memo.status == DecisionStatus.APPROVED
+
+
 def test_memo_renders_without_error():
     eng = DecisionEngine(RiskManager())
     memo = eng.build(make_signal(), [], 100_000.0, 100_000.0)

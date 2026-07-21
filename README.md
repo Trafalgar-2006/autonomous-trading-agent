@@ -67,6 +67,12 @@ python -m src.main plan
 # Walk-forward, out-of-sample evaluation vs SPY buy-and-hold
 python -m src.main walkforward --days 1500
 
+# A/B comparison of strategy improvements (walk-forward vs SPY)
+python -m src.main experiments --days 2600
+
+# Forward paper-test report (realized performance vs backtest, from the DB)
+python -m src.main report
+
 # Start continuous paper trading (Ctrl+C for graceful shutdown)
 python -m src.main run
 
@@ -136,14 +142,20 @@ re-fetching bars, and a precomputed-signal fast backtest keeps sweeps quick.
 strategy improvements (drop momentum, SPY>200SMA market filter, volatility-target
 sizing, cross-sectional top-N) side-by-side against SPY.
 
-> Walk-forward findings (multi-year out-of-sample):
-> - **baseline** (3 strategies): −1.5% CAGR — momentum was actively losing money.
-> - **momentum disabled**: +5.8% CAGR / 0.50 Sharpe, lower drawdown → now the default.
-> - **volatility-target sizing** roughly halved max drawdown (12.8% → 6.8%).
-> - Market filter / cross-sectional were mixed in a mostly-bull window (not adopted).
+> Walk-forward findings (2019–2026 out-of-sample, includes the 2022 bear):
+> - **momentum** loses money across the full cycle → **disabled** (config).
+> - **market filter** (SPY > 200-day SMA for new longs) roughly **halved max
+>   drawdown** (≈25% → 14%) for the best Sharpe, robust across 150/200/250-day
+>   SMAs → **adopted live** (`risk.market_filter`).
+> - **volatility-target sizing** further reduced drawdown → **adopted live**
+>   (`risk.vol_target`); combined market+vol gave the lowest DD (≈11%).
+> - **cross-sectional momentum** had the highest raw return (7.4% CAGR) but the
+>   highest drawdown (34%) — kept as a research option, not adopted.
 >
-> Even improved, the system did **not** beat SPY buy-and-hold (~17% CAGR). Treat it
-> as a research platform, not a money-maker, until a real edge is demonstrated.
+> Even improved, the system still does **not** beat SPY buy-and-hold. The adopted
+> changes are about **not blowing up** while the search for a real edge continues.
+> Treat it as a research platform, not a money-maker, until an edge is proven and
+> confirmed by 3–6 months of forward paper trading (`python -m src.main report`).
 
 ## Notes on the backtest
 

@@ -219,6 +219,10 @@ class RiskManager:
             risk_capital = equity * risk_pct
             risk_based_qty = risk_capital / risk_per_share if risk_per_share > 0 else 0
 
+        # Volatility-target multiplier (set by the ensemble when vol_target is on)
+        size_mult = signal.reasoning.get("size_mult", 1.0)
+        risk_based_qty *= size_mult
+
         # Capital-constrained sizing
         capital_based_qty = min(available_capital, max_position_value) / price
 

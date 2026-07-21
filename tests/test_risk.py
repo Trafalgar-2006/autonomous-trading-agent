@@ -67,6 +67,20 @@ def test_sell_with_position_sells_full_quantity():
     assert order.quantity == 7.5
 
 
+def test_size_mult_scales_position():
+    r = RiskManager()
+    # Wide stop so the risk-based size (not the capital cap) is binding.
+    full = make_signal(price=100.0, stop=80.0)
+    full.reasoning = {"atr": 2.0, "size_mult": 1.0}
+    half = make_signal(price=100.0, stop=80.0)
+    half.reasoning = {"atr": 2.0, "size_mult": 0.5}
+    o_full = r.evaluate(full, [], 100_000.0, 100_000.0)
+    o_half = r.evaluate(half, [], 100_000.0, 100_000.0)
+    assert o_full is not None and o_half is not None
+    assert o_half.quantity < o_full.quantity
+    assert abs(o_half.quantity * 2 - o_full.quantity) < 1e-6
+
+
 def test_circuit_breaker_ignores_profit():
     r = RiskManager()
     eq = r.config.initial_capital

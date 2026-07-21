@@ -95,12 +95,14 @@ class OrderManager:
             if pos.symbol not in self._active_trades:
                 self._active_trades[pos.symbol] = self._reconstruct_trade(pos)
 
-    async def process_signals(self, signals: list[Signal]) -> list:
+    async def process_signals(self, signals: list[Signal], market_ok: bool = True) -> list:
         """
         Process a batch of signals through the decision funnel:
         build a memo (APPROVED/WATCHLIST/REJECTED), persist it, and — only in
         'auto' execution mode — execute the APPROVED ones. In 'propose' mode
         nothing is traded; the memos are left for human review.
+
+        `market_ok` is the SPY>SMA regime flag for the market filter.
 
         Returns the list of DecisionMemo objects for monitoring/alerts.
         """
@@ -118,7 +120,8 @@ class OrderManager:
 
         for signal in signals:
             try:
-                memo = self.decision_engine.build(signal, positions, equity, cash)
+                memo = self.decision_engine.build(signal, positions, equity, cash,
+                                                  market_ok=market_ok)
                 self.store.save_decision(memo)
                 memos.append(memo)
 

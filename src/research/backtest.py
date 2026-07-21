@@ -29,6 +29,66 @@ from .experiment import ExperimentConfig
 logger = logging.getLogger(__name__)
 
 
+def _xs_momentum_signals(enriched, pos_index, date, exp, longs_allowed):
+    """
+    Cross-sectional momentum: rank every symbol by trailing return over
+    `xs_lookback` bars and long the top `xs_top`. Emits BUY for the top names
+    (if longs allowed) and SELL for everything else (the engine only acts on a
+    SELL when it actually holds that symbol), giving a monthly-ish rotation.
+    """
+    from ..core.models import Signal, SignalAction
+
+    scores = {}
+    rows = {}
+    for sym, df in enriched.items():
+        pos = pos_index[sym].get(date)
+        if pos is None or pos < exp.xs_lookback:
+            continue
+        row = df.iloc[pos]
+        past = df["close"].iloc[pos - exp.xs_lookback]
+        price = float(row["close"])
+        if past and past > 0 and price > 0:
+            scores[sym] = price / float(past) - 1.0
+            rows[sym] = row
+
+    if not scores:
+        return []
+
+    ranked = sorted(scores, key=lambda s: scores[s], reverse=True)
+    top = set(ranked[: exp.xs_top])
+
+    out = []
+    for sym in ranked:
+        row = rows[sym]
+        price = float(row["close"])
+        atr = float(row["atr"]) if "atr" in row and pd.notna(row["atr"]) else price * 0.02
+        if sym in top:
+            if not longs_allowed:
+                continue
+            reasoning = {"atr": atr, "xs_return": round(scores[sym], 4),
+                         "entry_reason": "cross_sectional_momentum"}
+            if exp.vol_target and "volatility_20d" in row and pd.notna(row["volatility_20d"]):
+                vol = float(row["volatility_20d"])
+                if vol > 0:
+                    lo, hi = exp.vol_mult_bounds
+                    reasoning["size_mult"] = float(min(hi, max(lo, exp.vol_target / vol)))
+            out.append(Signal(
+                symbol=sym, action=SignalAction.BUY, strategy="xs_momentum",
+                confidence=0.8, entry_price=price,
+                stop_loss=price - 2.0 * atr, take_profit=price + 3.0 * atr,
+                reasoning=reasoning,
+            ))
+        else:
+            out.append(Signal(
+                symbol=sym, action=SignalAction.SELL, strategy="xs_momentum",
+                confidence=1.0, entry_price=price,
+                reasoning={"exit_reason": "fell_out_of_top"},
+            ))
+    # Exits first, then top-ranked BUYs.
+    out.sort(key=lambda s: (s.action == SignalAction.BUY, s.confidence))
+    return out
+
+
 def build_fast_signal_fn(
     enriched: dict[str, pd.DataFrame],
     ensemble: SignalEnsemble,
@@ -67,6 +127,12 @@ def build_fast_signal_fn(
         longs_allowed = True
         if exp.market_filter and market_ok is not None:
             longs_allowed = bool(market_ok.get(date, True))
+
+        # Cross-sectional momentum: rank the universe by trailing return and long
+        # the top names (ignores per-symbol strategy signals entirely).
+        if exp.xs_momentum:
+            return _xs_momentum_signals(
+                enriched, pos_index, date, exp, longs_allowed)
 
         buys, sells = [], []
         for sym, df in enriched.items():
@@ -130,7 +196,9 @@ def run_fast_backtest(
     enriched = {s: features.compute_all(df) for s, df in data.items()}
 
     ens = ensemble or SignalEnsemble()
-    if exp.disabled_strategies:
+    if exp.strategies is not None:
+        ens.set_active_strategies(exp.strategies)
+    elif exp.disabled_strategies:
         ens.strategies = [s for s in ens.strategies if s.name not in exp.disabled_strategies]
 
     signal_fn = build_fast_signal_fn(

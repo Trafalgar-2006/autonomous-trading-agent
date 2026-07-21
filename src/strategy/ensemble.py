@@ -14,6 +14,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from ..core.config import Config
 from ..core.models import Signal, SignalAction, MarketRegime
 from .base import BaseStrategy
 from .mean_reversion import MeanReversionStrategy
@@ -61,6 +62,10 @@ class SignalEnsemble:
         # Default neutral until update_performance_weights() is called.
         self.performance_weights: dict[str, float] = {}
 
+        # Volatility-target sizing (from config; None = off). Applied as a
+        # per-signal size multiplier consumed by the risk manager.
+        self._vol_target = Config().vol_target
+
         # Weekly trend cache: symbol -> {"bullish": bool, "rsi": float, "macd_bullish": bool}
         self._weekly_trends: dict[str, dict] = {}
         
@@ -69,15 +74,26 @@ class SignalEnsemble:
 
     def _init_strategies(self):
         """Initialize and register all enabled strategies."""
-        all_strategies = [
+        # Keep every strategy instance so research can force-enable any subset
+        # regardless of the config `enabled` flags.
+        self._all_strategies = [
             MeanReversionStrategy(),
             MomentumStrategy(),
             BreakoutStrategy(),
         ]
-        
-        self.strategies = [s for s in all_strategies if s.enabled]
+
+        self.strategies = [s for s in self._all_strategies if s.enabled]
         logger.info(f"Ensemble initialized with {len(self.strategies)} strategies: "
                      f"{[s.name for s in self.strategies]}")
+
+    def set_active_strategies(self, names):
+        """Override which strategies run, ignoring config `enabled` flags.
+
+        Used by the research/experiment harness to A/B specific strategy sets
+        (e.g. with vs without momentum)."""
+        wanted = set(names)
+        self.strategies = [s for s in self._all_strategies if s.name in wanted]
+        return self.strategies
 
     def _detect_regime(self, df: pd.DataFrame):
         """Update the current market regime from the data."""
@@ -310,6 +326,14 @@ class SignalEnsemble:
                             else "neutral"
                         )
                         signal.reasoning["weekly_rsi"] = weekly.get("rsi", 50)
+
+                    # Volatility-target sizing multiplier (for BUY entries).
+                    if (self._vol_target and signal.action == SignalAction.BUY
+                            and "volatility_20d" in df.columns):
+                        vol = df["volatility_20d"].iloc[-1]
+                        if pd.notna(vol) and vol > 0:
+                            signal.reasoning["size_mult"] = float(
+                                min(2.0, max(0.5, self._vol_target / float(vol))))
 
                     signals.append(signal)
             except Exception as e:
