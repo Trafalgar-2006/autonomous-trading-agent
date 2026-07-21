@@ -55,6 +55,13 @@ class MarketRegime(Enum):
     LOW_VOLATILITY = "low_volatility"
 
 
+class DecisionStatus(Enum):
+    """Final verdict for a trade decision memo (seb.ai-style funnel)."""
+    APPROVED = "approved"     # passes every gate — eligible to trade
+    WATCHLIST = "watchlist"   # interesting but a soft gate failed — watch, don't act
+    REJECTED = "rejected"     # blocked by risk rules — do not trade
+
+
 class EventType(Enum):
     SIGNAL_GENERATED = "signal_generated"
     RISK_APPROVED = "risk_approved"
@@ -175,3 +182,63 @@ class Event:
     source: str = ""
     timestamp: datetime = field(default_factory=datetime.utcnow)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+
+@dataclass
+class DecisionMemo:
+    """
+    A structured, human-readable trade decision — inspired by the seb.ai
+    workflow's "Final Decision Memo". Every actionable signal produces one,
+    whether or not it is traded, forming an audit trail.
+    """
+    symbol: str
+    action: SignalAction
+    status: DecisionStatus
+    strategy: str
+    signal_strength: float                 # 0..1 (from ensemble confidence)
+    risk_level: str = "unknown"            # low | medium | high
+    # Trade plan
+    entry: Optional[float] = None
+    target: Optional[float] = None
+    stop: Optional[float] = None
+    invalidation: Optional[float] = None   # level that proves the setup wrong
+    timeframe: str = "1Day"
+    risk_reward: Optional[float] = None
+    # Sizing (filled when risk approves)
+    quantity: float = 0.0
+    dollar_risk: float = 0.0
+    # Context
+    regime: Optional[MarketRegime] = None
+    rationale: str = ""                    # one-line reason for the setup
+    reasons: list = field(default_factory=list)  # why this status was assigned
+    signal_id: Optional[str] = None
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+    def render(self) -> str:
+        """Render a plain-text decision memo."""
+        def money(v):
+            return f"${v:,.2f}" if isinstance(v, (int, float)) else "—"
+
+        lines = [
+            f"DECISION MEMO — {self.symbol} [{self.status.value.upper()}]",
+            f"  Action:          {self.action.value.upper()} ({self.strategy})",
+            f"  Signal strength: {self.signal_strength:.0%}",
+            f"  Risk level:      {self.risk_level}",
+            f"  Regime:          {self.regime.value if self.regime else '—'}",
+            "  Trade plan:",
+            f"    Entry:         {money(self.entry)}",
+            f"    Target:        {money(self.target)}",
+            f"    Stop:          {money(self.stop)}",
+            f"    Invalidation:  {money(self.invalidation)}",
+            f"    Timeframe:     {self.timeframe}",
+            f"    Risk:Reward:   {self.risk_reward:.2f}" if self.risk_reward else "    Risk:Reward:   —",
+        ]
+        if self.quantity:
+            lines.append(f"    Size:          {self.quantity:.4f} sh  (risk {money(self.dollar_risk)})")
+        if self.rationale:
+            lines.append(f"  Reason:          {self.rationale}")
+        if self.reasons:
+            lines.append(f"  Verdict basis:   {'; '.join(self.reasons)}")
+        lines.append("  >> PAPER ONLY — human review required <<")
+        return "\n".join(lines)

@@ -5,12 +5,10 @@ CLI Dashboard — rich terminal display for trading status.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.layout import Layout
 from rich.text import Text
 from rich import box
 
@@ -66,6 +64,41 @@ class CLIDashboard:
                 weekly,
             )
 
+        console.print(table)
+
+    def show_decisions(self, memos: list):
+        """Display decision memos (APPROVED / WATCHLIST / REJECTED) in a table."""
+        if not memos:
+            return
+
+        table = Table(title="Decision Memos", box=box.ROUNDED, show_lines=True)
+        table.add_column("Symbol", style="bold cyan", width=8)
+        table.add_column("Action", width=6)
+        table.add_column("Status", width=10)
+        table.add_column("Strat", style="dim", width=14)
+        table.add_column("Str", justify="right", width=5)
+        table.add_column("Entry", justify="right", width=9)
+        table.add_column("Stop", justify="right", width=9)
+        table.add_column("Target", justify="right", width=9)
+        table.add_column("R:R", justify="right", width=5)
+        table.add_column("Why", width=28)
+
+        style_for = {"approved": "green bold", "watchlist": "yellow", "rejected": "red"}
+        for m in memos:
+            st = m.status.value
+            rr = f"{m.risk_reward:.2f}" if m.risk_reward else "—"
+            table.add_row(
+                m.symbol,
+                Text(m.action.value.upper(), style="green" if m.action.value == "buy" else "red"),
+                Text(st.upper(), style=style_for.get(st, "white")),
+                m.strategy,
+                f"{m.signal_strength:.0%}",
+                f"${m.entry:.2f}" if m.entry else "—",
+                f"${m.stop:.2f}" if m.stop else "—",
+                f"${m.target:.2f}" if m.target else "—",
+                rr,
+                "; ".join(m.reasons)[:28] if m.reasons else "—",
+            )
         console.print(table)
 
     def show_status(

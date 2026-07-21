@@ -86,6 +86,11 @@ class Config:
         return self._settings.get("general", {}).get("mode", "paper")
 
     @property
+    def execution_mode(self) -> str:
+        """'auto' = execute APPROVED trades; 'propose' = memos only, human executes."""
+        return self._settings.get("general", {}).get("execution_mode", "auto").lower()
+
+    @property
     def db_path(self) -> str:
         return self._settings.get("database", {}).get("path", "data/trading.db")
 
@@ -162,6 +167,16 @@ class Config:
     @property
     def cooldown_hours(self) -> int:
         return self.risk.get("cooldown_hours", 24)
+
+    @property
+    def min_risk_reward(self) -> float:
+        """Minimum reward:risk for a setup to be APPROVED (else WATCHLIST)."""
+        return self.risk.get("min_risk_reward", 1.5)
+
+    @property
+    def strong_confidence(self) -> float:
+        """Confidence at/above which a setup is considered strong enough to auto-trade."""
+        return self.risk.get("strong_confidence", 0.6)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Generic getter with dot notation (e.g., 'general.mode')."""

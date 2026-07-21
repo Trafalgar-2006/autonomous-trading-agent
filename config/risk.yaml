@@ -9,6 +9,10 @@ risk_management:
   max_position_size: 0.10        # Max 10% of portfolio in a single position ($10k)
   min_position_value: 100.00     # Minimum $100 per trade
 
+  # === Decision gates (seb.ai-style memo funnel) ===
+  min_risk_reward: 1.5           # Below this reward:risk -> WATCHLIST instead of APPROVED
+  strong_confidence: 0.60        # Below this confidence -> WATCHLIST instead of APPROVED
+
   # === Portfolio Limits ===
   max_total_exposure: 0.80       # Max 80% of capital deployed at once
   max_open_positions: 8          # Max 8 open positions simultaneously

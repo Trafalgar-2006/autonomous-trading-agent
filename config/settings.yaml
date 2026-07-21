@@ -6,6 +6,7 @@ general:
   name: "TradingAgent"
   version: "0.2.0"
   mode: "paper"                  # paper | live
+  execution_mode: "auto"         # auto = trade APPROVED signals | propose = memos only, human executes
   timezone: "US/Eastern"
   log_level: "INFO"
 

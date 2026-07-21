@@ -96,6 +96,29 @@ class DataStore:
                 max_drawdown REAL
             );
 
+            CREATE TABLE IF NOT EXISTS decisions (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                symbol TEXT NOT NULL,
+                action TEXT,
+                status TEXT,
+                strategy TEXT,
+                signal_strength REAL,
+                risk_level TEXT,
+                entry_price REAL,
+                target REAL,
+                stop REAL,
+                invalidation REAL,
+                risk_reward REAL,
+                quantity REAL,
+                dollar_risk REAL,
+                regime TEXT,
+                rationale TEXT,
+                reasons TEXT DEFAULT '[]',
+                signal_id TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS daily_performance (
                 date TEXT PRIMARY KEY,
                 starting_equity REAL,
@@ -167,6 +190,48 @@ class DataStore:
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving trade: {e}")
+
+    def save_decision(self, memo) -> None:
+        """Persist a DecisionMemo for the audit trail."""
+        try:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO decisions (id, timestamp, symbol, action, "
+                "status, strategy, signal_strength, risk_level, entry_price, target, "
+                "stop, invalidation, risk_reward, quantity, dollar_risk, regime, "
+                "rationale, reasons, signal_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    memo.id,
+                    memo.timestamp.isoformat(),
+                    memo.symbol,
+                    memo.action.value,
+                    memo.status.value,
+                    memo.strategy,
+                    memo.signal_strength,
+                    memo.risk_level,
+                    memo.entry,
+                    memo.target,
+                    memo.stop,
+                    memo.invalidation,
+                    memo.risk_reward,
+                    memo.quantity,
+                    memo.dollar_risk,
+                    memo.regime.value if memo.regime else None,
+                    memo.rationale,
+                    json.dumps(memo.reasons),
+                    memo.signal_id,
+                ),
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving decision: {e}")
+
+    def get_decisions(self, limit: int = 100) -> list[dict]:
+        """Get recent decision memos."""
+        cursor = self.conn.execute(
+            "SELECT * FROM decisions ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def get_trades(self, limit: int = 100) -> list[dict]:
         """Get recent trades."""

@@ -76,6 +76,30 @@ class TelegramAlerts:
         """Send an error notification."""
         await self.send(f"<b>ERROR</b>\n{error}")
 
+    async def notify_decision(self, memo):
+        """Send a decision memo (APPROVED / WATCHLIST) via Telegram."""
+        badge = {
+            "approved": "APPROVED",
+            "watchlist": "WATCHLIST",
+            "rejected": "REJECTED",
+        }.get(memo.status.value, memo.status.value.upper())
+
+        lines = [
+            f"<b>{badge}: {memo.action.value.upper()} {memo.symbol}</b>",
+            f"Strategy: {memo.strategy} | Strength: {memo.signal_strength:.0%} | Risk: {memo.risk_level}",
+        ]
+        if memo.entry:
+            lines.append(f"Entry: ${memo.entry:.2f}")
+        if memo.stop:
+            lines.append(f"Stop: ${memo.stop:.2f}")
+        if memo.target:
+            lines.append(f"Target: ${memo.target:.2f}")
+        if memo.risk_reward:
+            lines.append(f"R:R: {memo.risk_reward:.2f}")
+        if memo.reasons:
+            lines.append("Why: " + "; ".join(memo.reasons))
+        await self.send("\n".join(lines))
+
     async def notify_trade_closed(self, symbol: str, pnl: float, pnl_pct: float, reason: str):
         """Send a trade closed notification."""
         result = "WIN" if pnl > 0 else "LOSS"

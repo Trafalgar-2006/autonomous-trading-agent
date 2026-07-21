@@ -13,9 +13,10 @@ from ..core.config import Config
 from ..core.event_bus import EventBus
 from ..core.models import (
     Event, EventType, Signal, SignalAction, OrderStatus,
-    Trade, Side, Position, TradeOutcome,
+    Trade, Side, Position, TradeOutcome, DecisionStatus,
 )
 from ..data.store import DataStore
+from ..decision.engine import DecisionEngine
 from ..risk.manager import RiskManager
 from ..risk.stops import compute_stop_level
 from .broker import AlpacaBroker
@@ -39,7 +40,9 @@ class OrderManager:
         self.bus = EventBus()
         self.risk_manager = RiskManager()
         self.broker = AlpacaBroker()
-        
+        # Builds decision memos and shares the same RiskManager state.
+        self.decision_engine = DecisionEngine(risk_manager=self.risk_manager)
+
         # Track active trades (symbol -> Trade)
         self._active_trades: dict[str, Trade] = {}
 
@@ -92,12 +95,18 @@ class OrderManager:
             if pos.symbol not in self._active_trades:
                 self._active_trades[pos.symbol] = self._reconstruct_trade(pos)
 
-    async def process_signals(self, signals: list[Signal]):
+    async def process_signals(self, signals: list[Signal]) -> list:
         """
-        Process a batch of signals: risk-check, execute, and log each one.
+        Process a batch of signals through the decision funnel:
+        build a memo (APPROVED/WATCHLIST/REJECTED), persist it, and — only in
+        'auto' execution mode — execute the APPROVED ones. In 'propose' mode
+        nothing is traded; the memos are left for human review.
+
+        Returns the list of DecisionMemo objects for monitoring/alerts.
         """
+        memos: list = []
         if not signals:
-            return
+            return memos
 
         # Get current state
         account = self.broker.get_account()
@@ -105,11 +114,26 @@ class OrderManager:
         equity = account.get("equity", self.config.initial_capital)
         cash = account.get("cash", self.config.initial_capital)
 
+        auto = self.config.execution_mode == "auto"
+
         for signal in signals:
             try:
-                await self._process_single_signal(signal, positions, equity, cash)
+                memo = self.decision_engine.build(signal, positions, equity, cash)
+                self.store.save_decision(memo)
+                memos.append(memo)
+
+                if memo.status != DecisionStatus.APPROVED:
+                    continue
+
+                if auto:
+                    await self._process_single_signal(signal, positions, equity, cash)
+                else:
+                    logger.info(f"[PROPOSE] APPROVED {signal.action.value.upper()} "
+                                f"{signal.symbol} — not executed (awaiting human review)")
             except Exception as e:
                 logger.error(f"Error processing signal {signal.id} for {signal.symbol}: {e}")
+
+        return memos
 
     async def _process_single_signal(
         self,

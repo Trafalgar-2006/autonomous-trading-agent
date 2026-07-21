@@ -41,6 +41,7 @@ from rich import box
 
 from .core.config import Config
 from .core.event_bus import EventBus
+from .core.models import DecisionStatus
 from .data.feed import MarketDataFeed
 from .data.features import FeatureEngine
 from .data.store import DataStore
@@ -158,17 +159,49 @@ class TradingAgent:
 
         return signals
 
+    async def plan(self):
+        """
+        Scan → build decision memos → print them. Never executes (paper preview).
+
+        This is the seb.ai-style funnel as a one-shot: every signal becomes a
+        structured APPROVED / WATCHLIST / REJECTED memo with a full trade plan,
+        for you to review before deciding anything.
+        """
+        signals = await self.scan()
+        if not signals:
+            return []
+
+        account = self.order_manager.broker.get_account()
+        positions = self.order_manager.broker.get_positions()
+        equity = account.get("equity", self.config.initial_capital)
+        cash = account.get("cash", self.config.initial_capital)
+
+        memos = []
+        for signal in signals:
+            memo = self.order_manager.decision_engine.build(signal, positions, equity, cash)
+            self.store.save_decision(memo)
+            memos.append(memo)
+
+        self.dashboard.show_decisions(memos)
+        console.print("\n[dim]Decision memos (paper preview only — nothing executed):[/dim]\n")
+        for memo in memos:
+            console.print(memo.render())
+            console.print("")
+        return memos
+
     async def run_cycle(self):
         """Run a single trading cycle: scan → risk check → execute."""
         try:
             signals = await self.scan()
             
             if signals:
-                await self.order_manager.process_signals(signals)
-                
-                # Send Telegram alerts for signals
-                for sig in signals:
-                    await self.alerts.notify_signal(sig)
+                memos = await self.order_manager.process_signals(signals)
+
+                # Show decision memos and alert on actionable ones.
+                self.dashboard.show_decisions(memos)
+                for memo in memos:
+                    if memo.status in (DecisionStatus.APPROVED, DecisionStatus.WATCHLIST):
+                        await self.alerts.notify_decision(memo)
 
             # Check stop-losses on existing positions
             await self.order_manager.check_stop_losses()
@@ -255,6 +288,8 @@ class TradingAgent:
         
         console.print(f"\n[bold green]Trading Agent started[/bold green]")
         console.print(f"   Mode: {'PAPER' if self.config.is_paper else 'LIVE'}")
+        console.print(f"   Execution: {self.config.execution_mode.upper()} "
+                      f"({'auto-trades APPROVED signals' if self.config.execution_mode == 'auto' else 'proposes only — human executes'})")
         console.print(f"   Core Symbols: {self.config.symbols}")
         console.print(f"   Market Scanner: {'ENABLED' if scanner_enabled else 'DISABLED'}")
         console.print(f"   Scan interval: {scan_interval} minutes")
@@ -485,7 +520,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",
-        choices=["scan", "run", "status", "backtest", "train", "doctor"],
+        choices=["scan", "plan", "run", "status", "backtest", "train", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -501,6 +536,8 @@ def main():
 
     if args.command == "scan":
         asyncio.run(agent.scan())
+    elif args.command == "plan":
+        asyncio.run(agent.plan())
     elif args.command == "run":
         # Graceful shutdown: Ctrl+C flips the running flag; the chunked sleep in
         # run() notices within a second and exits cleanly (sends "stopped" alert).
