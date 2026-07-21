@@ -1,6 +1,10 @@
 strategy:
   name: "momentum"
-  enabled: true
+  # DISABLED 2026-07-21 based on walk-forward evidence: with momentum the
+  # ensemble returned -1.49% CAGR (attribution: momentum -$4.3k); without it,
+  # +5.78% CAGR / 0.50 Sharpe with lower drawdown. Re-enable only if a fixed
+  # momentum variant proves out in `python -m src.main experiments`.
+  enabled: false
   weight: 1.0
   
   parameters:

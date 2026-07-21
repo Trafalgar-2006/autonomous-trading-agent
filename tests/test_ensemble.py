@@ -18,19 +18,30 @@ def test_multiplier_caps():
 
 class _FakeStore:
     def get_strategy_performance(self):
+        # Covers every strategy the ensemble might load; assertions below only
+        # rely on ones that are enabled (momentum is disabled by config).
         return {
             "momentum": {"trades": 50, "win_rate": 0.9},
-            "mean_reversion": {"trades": 50, "win_rate": 0.1},
-            "breakout": {"trades": 2, "win_rate": 1.0},  # too few -> neutral
+            "mean_reversion": {"trades": 50, "win_rate": 0.9},   # strong -> up-weight
+            "breakout": {"trades": 50, "win_rate": 0.1},         # weak -> down-weight
         }
 
 
 def test_update_weights_from_store():
     e = SignalEnsemble()
     e.update_performance_weights(_FakeStore(), min_trades=10)
-    assert e.performance_weights.get("momentum", 1.0) > 1.0
-    assert e.performance_weights.get("mean_reversion", 1.0) < 1.0
-    assert e.performance_weights.get("breakout", 1.0) == 1.0
+    # Only enabled strategies get weights; check the two that are always enabled.
+    assert e.performance_weights.get("mean_reversion", 1.0) > 1.0
+    assert e.performance_weights.get("breakout", 1.0) < 1.0
+
+
+def test_too_few_trades_stays_neutral():
+    class Store:
+        def get_strategy_performance(self):
+            return {"mean_reversion": {"trades": 3, "win_rate": 1.0}}
+    e = SignalEnsemble()
+    e.update_performance_weights(Store(), min_trades=10)
+    assert e.performance_weights.get("mean_reversion", 1.0) == 1.0
 
 
 def test_update_weights_survives_bad_store():

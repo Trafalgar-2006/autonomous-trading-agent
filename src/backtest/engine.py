@@ -227,6 +227,7 @@ class BacktestEngine:
                         continue
                     fill = self._buy_fill(open_price)
                     qty = self._size_position(equity, cash, fill, order.get("atr", 0.0))
+                    qty *= order.get("size_mult", 1.0)  # volatility-target scaling
                     if qty * fill < self.min_position_value:
                         continue
                     cost = qty * fill + self._commission(qty)
@@ -296,6 +297,7 @@ class BacktestEngine:
                         "stop_loss": signal.stop_loss,
                         "take_profit": signal.take_profit,
                         "atr": signal.reasoning.get("atr", 0.0),
+                        "size_mult": signal.reasoning.get("size_mult", 1.0),
                     })
                     queued.add(sym)
                 elif signal.action == SignalAction.SELL and sym in positions:

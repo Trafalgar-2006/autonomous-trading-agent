@@ -28,6 +28,7 @@ from rich import box
 from ..data.features import FeatureEngine
 from ..strategy.ensemble import SignalEnsemble
 from .backtest import run_fast_backtest
+from .experiment import ExperimentConfig, market_ok_series
 from . import metrics as M
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,10 @@ class WalkForward:
         max_risk_per_trade: float = 0.01,
         max_position_size: float = 0.10,
         max_positions: int = 8,
+        experiment: ExperimentConfig = None,
     ):
         self.feed = feed
+        self.experiment = experiment or ExperimentConfig()
         self.symbols = [s for s in symbols if s != benchmark]
         self.initial_capital = initial_capital
         self.train_days = train_days
@@ -66,7 +69,7 @@ class WalkForward:
         self.max_positions = max_positions
         self.features = FeatureEngine()
 
-    def run(self, total_days: int = 1260) -> dict:
+    def run(self, total_days: int = 1260, verbose: bool = True) -> dict:
         """Fetch data, run all folds, and return an aggregated result dict."""
         fetch = list(set(self.symbols) | {self.benchmark})
         data = self.feed.get_bars_multi(fetch, days=total_days)
@@ -88,6 +91,11 @@ class WalkForward:
             console.print(f"[red]Not enough history ({n} bars) for "
                           f"{self.train_days}+{self.test_days}.[/red]")
             return {}
+
+        # Market-regime filter series (SPY > SMA) — computed once on full history.
+        market_ok = None
+        if self.experiment.market_filter and bench_df is not None:
+            market_ok = market_ok_series(bench_df, self.experiment.market_sma)
 
         trade_data = {s: df for s, df in data.items() if s in self.symbols}
 
@@ -136,6 +144,8 @@ class WalkForward:
                 max_risk_per_trade=self.max_risk_per_trade,
                 max_position_size=self.max_position_size,
                 max_positions=self.max_positions,
+                experiment=self.experiment,
+                market_ok=market_ok,
             )
 
             # OOS equity within [test_start, test_end] -> daily returns.
@@ -184,7 +194,8 @@ class WalkForward:
             "turnover": to,
             "n_trades": len(all_trades),
         }
-        self._report(result)
+        if verbose:
+            self._report(result)
         return result
 
     def _report(self, result: dict) -> None:
@@ -254,3 +265,54 @@ class WalkForward:
             else:
                 console.print("\n[bold yellow]Strategy did NOT clearly beat SPY buy-and-hold "
                               "out-of-sample — no demonstrated edge yet.[/bold yellow]")
+
+
+def compare_experiments(
+    feed,
+    symbols: list[str],
+    experiments: list[ExperimentConfig],
+    total_days: int = 1500,
+    **wf_kwargs,
+) -> dict:
+    """
+    Run the walk-forward for several experiment configs and print one
+    side-by-side comparison table (each config vs SPY buy-and-hold).
+    """
+    results: dict[str, dict] = {}
+    bench = {}
+    for exp in experiments:
+        console.print(f"\n[dim]Running experiment: {exp.name}...[/dim]")
+        wf = WalkForward(feed, symbols, experiment=exp, **wf_kwargs)
+        res = wf.run(total_days=total_days, verbose=False)
+        results[exp.name] = res
+        if res.get("benchmark"):
+            bench = res["benchmark"]
+
+    table = Table(title="Experiment Comparison (out-of-sample vs SPY B&H)", box=box.ROUNDED)
+    table.add_column("Experiment", style="bold")
+    table.add_column("CAGR", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("Sortino", justify="right")
+    table.add_column("Max DD", justify="right")
+    table.add_column("Trades", justify="right")
+
+    # SPY benchmark row for reference
+    if bench:
+        table.add_row("[cyan]SPY buy & hold[/cyan]",
+                      f"{bench.get('cagr', 0):.2%}", f"{bench.get('sharpe', 0):.2f}",
+                      f"{bench.get('sortino', 0):.2f}", f"{bench.get('max_drawdown', 0):.2%}", "—")
+
+    for name, res in results.items():
+        s = res.get("strategy", {})
+        cagr = s.get("cagr", 0)
+        sharpe = s.get("sharpe", 0)
+        beat = bench and sharpe > bench.get("sharpe", 0) and cagr > bench.get("cagr", 0)
+        style = "green" if beat else ""
+        table.add_row(
+            f"[{style}]{name}[/{style}]" if style else name,
+            f"{cagr:.2%}", f"{sharpe:.2f}", f"{s.get('sortino', 0):.2f}",
+            f"{s.get('max_drawdown', 0):.2%}", str(res.get("n_trades", 0)),
+        )
+    console.print(table)
+    console.print("[dim]Green = beat SPY on both Sharpe and CAGR out-of-sample.[/dim]")
+    return results

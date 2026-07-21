@@ -498,6 +498,39 @@ class TradingAgent:
         )
         return wf.run(total_days=days)
 
+    async def experiments(self, days: int = 1500):
+        """
+        Run a walk-forward comparison of strategy improvements vs SPY:
+        baseline -> drop momentum -> +market filter -> +vol targeting -> +cross-sectional.
+        """
+        from .data.cache import CachedFeed
+        from .research.walkforward import compare_experiments
+        from .research.experiment import ExperimentConfig
+
+        days = max(days, 1000)
+        console.print(f"\n[bold cyan]Strategy experiment comparison ({days} days)...[/bold cyan]\n")
+
+        cached = CachedFeed(self.feed)
+        exps = [
+            ExperimentConfig(name="baseline"),
+            ExperimentConfig(name="no_momentum", disabled_strategies=("momentum",)),
+            ExperimentConfig(name="+market_filter",
+                             disabled_strategies=("momentum",), market_filter=True),
+            ExperimentConfig(name="+vol_target",
+                             disabled_strategies=("momentum",), market_filter=True,
+                             vol_target=0.20),
+            ExperimentConfig(name="+xsectional_top5",
+                             disabled_strategies=("momentum",), market_filter=True,
+                             vol_target=0.20, cross_sectional_top=5),
+        ]
+        return compare_experiments(
+            cached, self.config.symbols, exps, total_days=days,
+            initial_capital=self.config.initial_capital,
+            max_risk_per_trade=self.config.max_risk_per_trade,
+            max_position_size=self.config.max_position_size,
+            max_positions=self.config.max_open_positions,
+        )
+
     async def train(self, days: int = 365):
         """Train the ML regime classifier on historical data."""
         console.print(f"\n[bold cyan]Training ML regime classifier ({days} days)...[/bold cyan]\n")
@@ -545,7 +578,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",
-        choices=["scan", "plan", "run", "status", "backtest", "train", "walkforward", "doctor"],
+        choices=["scan", "plan", "run", "status", "backtest", "train", "walkforward", "experiments", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -582,6 +615,8 @@ def main():
         asyncio.run(agent.train(days=args.days))
     elif args.command == "walkforward":
         asyncio.run(agent.walkforward(days=args.days))
+    elif args.command == "experiments":
+        asyncio.run(agent.experiments(days=args.days))
 
 
 if __name__ == "__main__":

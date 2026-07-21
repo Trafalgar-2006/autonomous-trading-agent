@@ -132,10 +132,18 @@ the next unseen window, and the concatenated out-of-sample returns are compared
 head-to-head with **SPY buy-and-hold**. A disk cache (`data/cache/`) avoids
 re-fetching bars, and a precomputed-signal fast backtest keeps sweeps quick.
 
-> Current honest finding: across a multi-year out-of-sample test the ensemble did
-> **not** beat SPY buy-and-hold (roughly flat vs SPY's strongly positive return).
-> This is expected for classic TA on liquid large-caps — treat the system as a
-> research platform, not a money-maker, until a real edge is demonstrated.
+`python -m src.main experiments` runs a walk-forward **A/B comparison** of
+strategy improvements (drop momentum, SPY>200SMA market filter, volatility-target
+sizing, cross-sectional top-N) side-by-side against SPY.
+
+> Walk-forward findings (multi-year out-of-sample):
+> - **baseline** (3 strategies): −1.5% CAGR — momentum was actively losing money.
+> - **momentum disabled**: +5.8% CAGR / 0.50 Sharpe, lower drawdown → now the default.
+> - **volatility-target sizing** roughly halved max drawdown (12.8% → 6.8%).
+> - Market filter / cross-sectional were mixed in a mostly-bull window (not adopted).
+>
+> Even improved, the system did **not** beat SPY buy-and-hold (~17% CAGR). Treat it
+> as a research platform, not a money-maker, until a real edge is demonstrated.
 
 ## Notes on the backtest
 

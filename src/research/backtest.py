@@ -21,8 +21,10 @@ from typing import Optional
 import pandas as pd
 
 from ..backtest.engine import BacktestEngine, BacktestResult
+from ..core.models import SignalAction
 from ..data.features import FeatureEngine
 from ..strategy.ensemble import SignalEnsemble
+from .experiment import ExperimentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,8 @@ def build_fast_signal_fn(
     ensemble: SignalEnsemble,
     window: int = 320,
     trade_start=None,
+    experiment: Optional[ExperimentConfig] = None,
+    market_ok: Optional[dict] = None,
 ):
     """
     Build a `signal_fn(date) -> list[Signal]` using precomputed context.
@@ -44,6 +48,8 @@ def build_fast_signal_fn(
         trade_start: if set, no signals are emitted before this date (used to
                      confine a walk-forward fold to its test window).
     """
+    exp = experiment or ExperimentConfig()
+
     weekly_map: dict[str, dict] = {}
     regime_map: dict[str, dict] = {}
     pos_index: dict[str, dict] = {}
@@ -56,7 +62,13 @@ def build_fast_signal_fn(
     def signal_fn(date):
         if trade_start is not None and date < trade_start:
             return []
-        out = []
+
+        # Market regime filter: block NEW longs when SPY is below its SMA.
+        longs_allowed = True
+        if exp.market_filter and market_ok is not None:
+            longs_allowed = bool(market_ok.get(date, True))
+
+        buys, sells = [], []
         for sym, df in enriched.items():
             pos = pos_index[sym].get(date)
             if pos is None:
@@ -68,11 +80,33 @@ def build_fast_signal_fn(
             weekly = weekly_map[sym].get(date)
             regime = regime_map[sym].get(date)
             try:
-                out.extend(ensemble.generate_signals(sym, win, weekly=weekly, regime=regime))
+                sigs = ensemble.generate_signals(sym, win, weekly=weekly, regime=regime)
             except Exception as e:
                 logger.debug(f"fast signal_fn failed for {sym} at {date}: {e}")
-        out.sort(key=lambda s: s.confidence, reverse=True)
-        return out
+                continue
+
+            for s in sigs:
+                if s.action == SignalAction.BUY:
+                    if not longs_allowed:
+                        continue
+                    # Volatility-target sizing: scale size toward a common vol.
+                    if exp.vol_target and "volatility_20d" in df.columns:
+                        vol = df.at[date, "volatility_20d"]
+                        if pd.notna(vol) and vol > 0:
+                            lo, hi = exp.vol_mult_bounds
+                            s.reasoning["size_mult"] = float(
+                                min(hi, max(lo, exp.vol_target / float(vol))))
+                    buys.append(s)
+                else:
+                    sells.append(s)
+
+        # Cross-sectional selection: keep only the top-N BUYs by conviction.
+        buys.sort(key=lambda s: s.confidence, reverse=True)
+        if exp.cross_sectional_top is not None:
+            buys = buys[: exp.cross_sectional_top]
+
+        # Exits first so held positions can always be closed.
+        return sells + buys
 
     return signal_fn
 
@@ -87,13 +121,20 @@ def run_fast_backtest(
     max_risk_per_trade: float = 0.01,
     max_position_size: float = 0.10,
     max_positions: int = 8,
+    experiment: Optional[ExperimentConfig] = None,
+    market_ok: Optional[dict] = None,
 ) -> BacktestResult:
     """Run the fast research backtest and return a BacktestResult."""
+    exp = experiment or ExperimentConfig()
     features = FeatureEngine()
     enriched = {s: features.compute_all(df) for s, df in data.items()}
 
     ens = ensemble or SignalEnsemble()
-    signal_fn = build_fast_signal_fn(enriched, ens, trade_start=trade_start)
+    if exp.disabled_strategies:
+        ens.strategies = [s for s in ens.strategies if s.name not in exp.disabled_strategies]
+
+    signal_fn = build_fast_signal_fn(
+        enriched, ens, trade_start=trade_start, experiment=exp, market_ok=market_ok)
 
     engine = BacktestEngine(
         initial_capital=initial_capital,

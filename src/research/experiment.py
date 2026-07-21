@@ -1,0 +1,47 @@
+"""
+Experiment configuration for research — composable strategy improvements to
+A/B test through the walk-forward harness.
+
+Each option can be toggled independently so we can measure its marginal effect:
+  * disabled_strategies : drop under-performing strategies (e.g. momentum)
+  * market_filter       : only open longs when SPY is above its 200-day SMA
+  * vol_target          : volatility-target position sizing (scale by target/vol)
+  * cross_sectional_top : each day, keep only the top-N BUY candidates by conviction
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+import pandas as pd
+
+
+@dataclass
+class ExperimentConfig:
+    name: str = "baseline"
+    disabled_strategies: tuple = ()
+    market_filter: bool = False
+    market_sma: int = 200
+    vol_target: Optional[float] = None          # annualized per-position vol target
+    vol_mult_bounds: tuple = (0.5, 2.0)
+    cross_sectional_top: Optional[int] = None   # keep top-N BUYs per day
+    tags: dict = field(default_factory=dict)
+
+
+def market_ok_series(spy_df: pd.DataFrame, sma: int = 200) -> dict:
+    """
+    date -> bool: is SPY above its `sma`-day SMA (i.e. long trades allowed)?
+
+    Early bars without enough history to compute the SMA default to True
+    (permissive — don't block when the trend is simply unknown).
+    """
+    if spy_df is None or spy_df.empty:
+        return {}
+    close = spy_df["close"]
+    ma = close.rolling(sma).mean()
+    ok = close > ma
+    out = {}
+    for date, val in ok.items():
+        out[date] = True if pd.isna(val) else bool(val)
+    return out
