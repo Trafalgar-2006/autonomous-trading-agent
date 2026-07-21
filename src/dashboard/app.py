@@ -201,6 +201,40 @@ with right:
                f"risk/trade {cfg.max_risk_per_trade:.1%} · "
                f"market filter {'ON' if cfg.market_filter else 'OFF'}")
 
+st.subheader("Forward test vs backtest")
+_baseline = cfg.settings.get("forward_test", {}).get("baseline", {})
+if _baseline:
+    from src.research.drift import (
+        compare_to_baseline,
+        elapsed_trading_days,
+        live_metrics_from_snapshots,
+    )
+    _stats = store.get_trade_stats()
+    _live = live_metrics_from_snapshots(snaps or [])
+    _drift = compare_to_baseline(
+        _live, _baseline,
+        n_days=elapsed_trading_days(snaps or []),
+        n_trades=_stats.get("total_trades") or 0,
+    )
+    _label = {
+        "too_early": ("Too early to tell", st.info),
+        "on_track": ("On track", st.success),
+        "underperforming": ("Underperforming (within noise)", st.warning),
+        "diverged": ("Diverged from backtest", st.error),
+    }.get(_drift["verdict"], (_drift["verdict"], st.info))
+    _label[1](f"**{_label[0]}** — {_drift['n_days']} trading days, "
+              f"{_drift['n_trades']} closed trades")
+    st.dataframe(pd.DataFrame([
+        {"Metric": "CAGR", "Live": f"{_drift['live']['cagr']:.2%}",
+         "Backtest": f"{_drift['baseline']['cagr']:.2%}"},
+        {"Metric": "Sharpe", "Live": f"{_drift['live']['sharpe']:.2f}",
+         "Backtest": f"{_drift['baseline']['sharpe']:.2f}"},
+        {"Metric": "Max drawdown", "Live": f"{_drift['live']['max_drawdown']:.2%}",
+         "Backtest": f"{_drift['baseline']['max_drawdown']:.2%}"},
+    ]), width="stretch", hide_index=True)
+    for _n in _drift["notes"]:
+        st.caption(_n)
+
 st.subheader("Execution quality")
 slip = store.get_slippage_stats()
 fills = store.get_fills(limit=50)

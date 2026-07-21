@@ -549,6 +549,28 @@ class TradingAgent:
         t.add_row("Worst trade", f"${stats.get('worst_trade') or 0:,.2f}")
         console.print(t)
 
+        # ── Forward-test drift: is live matching the backtest? ─────────
+        from .research.drift import (
+            compare_to_baseline,
+            elapsed_trading_days,
+            format_drift,
+            live_metrics_from_snapshots,
+        )
+
+        snapshots = self.store.get_snapshots(limit=20000)
+        baseline = self.config.settings.get("forward_test", {}).get("baseline", {})
+        if baseline:
+            live = live_metrics_from_snapshots(snapshots)
+            drift = compare_to_baseline(
+                live, baseline,
+                n_days=elapsed_trading_days(snapshots),
+                n_trades=total,
+            )
+            style = {"on_track": "green", "too_early": "dim",
+                     "underperforming": "yellow", "diverged": "red"}.get(
+                         drift["verdict"], "white")
+            console.print(f"\n[{style}]{format_drift(drift)}[/{style}]")
+
         # Decision funnel counts
         from collections import Counter
         counts = Counter(d["status"] for d in decisions)
