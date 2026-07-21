@@ -9,18 +9,17 @@ Applies a weekly trend filter to block counter-trend BUY signals.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from ..core.config import Config
-from ..core.models import Signal, SignalAction, MarketRegime
+from ..core.models import MarketRegime, Signal, SignalAction
 from .base import BaseStrategy
-from .mean_reversion import MeanReversionStrategy
-from .momentum import MomentumStrategy
 from .breakout import BreakoutStrategy
+from .mean_reversion import MeanReversionStrategy
 from .ml_classifier import RegimeClassifier
+from .momentum import MomentumStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +67,7 @@ class SignalEnsemble:
 
         # Weekly trend cache: symbol -> {"bullish": bool, "rsi": float, "macd_bullish": bool}
         self._weekly_trends: dict[str, dict] = {}
-        
+
         # Initialize all strategies
         self._init_strategies()
 
@@ -276,8 +275,8 @@ class SignalEnsemble:
         self,
         symbol: str,
         df: pd.DataFrame,
-        weekly: Optional[dict] = None,
-        regime: Optional[MarketRegime] = None,
+        weekly: dict | None = None,
+        regime: MarketRegime | None = None,
     ) -> list[Signal]:
         """
         Run all strategies on a symbol and return aggregated signals.
@@ -335,6 +334,13 @@ class SignalEnsemble:
                             signal.reasoning["size_mult"] = float(
                                 min(2.0, max(0.5, self._vol_target / float(vol))))
 
+                    # Average daily dollar volume — drives the liquidity guard.
+                    if "volume_sma_20" in df.columns:
+                        adv = df["volume_sma_20"].iloc[-1]
+                        px = df["close"].iloc[-1]
+                        if pd.notna(adv) and pd.notna(px) and adv > 0:
+                            signal.reasoning["adv_notional"] = float(adv) * float(px)
+
                     signals.append(signal)
             except Exception as e:
                 logger.error(f"Error in strategy {strategy.name} for {symbol}: {e}")
@@ -363,12 +369,12 @@ class SignalEnsemble:
                     if weekly.get("bullish"):
                         best_buy.confidence = min(1.0, best_buy.confidence + 0.05)
                         best_buy.reasoning["weekly_confirmed"] = True
-                    
+
                     # Boost if multiple strategies agree
                     if len(buy_signals) > 1:
                         best_buy.confidence = min(1.0, best_buy.confidence + 0.1)
                         best_buy.reasoning["ensemble_agreement"] = len(buy_signals)
-                    
+
                     result.append(best_buy)
 
         # Process SELL signals — always allowed
@@ -383,7 +389,7 @@ class SignalEnsemble:
 
         return result
 
-    def _select_best(self, signals: list[Signal]) -> Optional[Signal]:
+    def _select_best(self, signals: list[Signal]) -> Signal | None:
         """Select the best signal from a list, weighted by strategy weight and confidence."""
         if not signals:
             return None

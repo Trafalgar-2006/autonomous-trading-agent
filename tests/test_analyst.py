@@ -2,10 +2,13 @@
 
 from datetime import datetime
 
+from src.core.models import DecisionMemo, DecisionStatus, Position, Side, SignalAction
 from src.monitoring.analyst import (
-    AIAnalyst, build_morning_prompt, build_eod_prompt, build_decision_prompt,
+    AIAnalyst,
+    build_decision_prompt,
+    build_eod_prompt,
+    build_morning_prompt,
 )
-from src.core.models import Position, Side, DecisionMemo, DecisionStatus, SignalAction
 
 
 def _pos(sym="AAPL", qty=10.0, price=100.0):

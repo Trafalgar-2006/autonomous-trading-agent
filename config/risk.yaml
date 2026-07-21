@@ -23,6 +23,7 @@ risk_management:
   max_open_positions: 8          # Max 8 open positions simultaneously
   max_correlated_exposure: 0.30  # Max 30% across highly-correlated held names
   correlation_threshold: 0.70    # Two names count as "correlated" above this return correlation
+  max_adv_pct: 0.01              # Never take more than 1% of a name's avg daily dollar volume
 
   # === Loss Limits (Circuit Breakers) ===
   max_daily_loss: 0.02           # Stop if daily loss > 2% ($2,004 at $100k)

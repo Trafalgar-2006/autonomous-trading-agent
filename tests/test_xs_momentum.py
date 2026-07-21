@@ -3,8 +3,8 @@
 import numpy as np
 import pandas as pd
 
-from src.strategy.xs_momentum import CrossSectionalMomentum
 from src.core.models import SignalAction
+from src.strategy.xs_momentum import CrossSectionalMomentum
 
 
 def _series(n=300, slope=0.05, seed=0):

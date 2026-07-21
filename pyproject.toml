@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.6"]
 
 [project.scripts]
 trading-agent = "src.main:main"
@@ -33,3 +33,23 @@ include = ["src*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = [".venv", "data", "build", "dist"]
+
+[tool.ruff.lint]
+# Pragmatic set: real bugs (F), style (E/W), unused imports, modern idioms.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # line length — handled by formatter preference, not worth failing CI
+    "B008",  # function call in default arg — used intentionally in a few places
+    "W293",  # whitespace on blank lines inside docstrings — cosmetic only
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+# The dashboard must set sys.path before importing `src.*` (Streamlit runs it
+# as a script), so module-level imports legitimately come after that block.
+"src/dashboard/app.py" = ["E402"]

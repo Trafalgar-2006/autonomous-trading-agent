@@ -5,7 +5,6 @@ Base Strategy — abstract interface for all trading strategies.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import pandas as pd
 
@@ -25,6 +24,6 @@ class BaseStrategy(ABC):
         self.params = strategy_config.get("parameters", {})
 
     @abstractmethod
-    def analyze(self, symbol: str, df: pd.DataFrame) -> Optional[Signal]:
+    def analyze(self, symbol: str, df: pd.DataFrame) -> Signal | None:
         """Analyze a symbol's data and optionally return a signal."""
         ...

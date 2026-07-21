@@ -1,7 +1,7 @@
 """Tests for the market-data feed's crypto/equity routing (no network)."""
 
-from src.data.feed import MarketDataFeed, is_crypto
 from src.core.config import Config
+from src.data.feed import MarketDataFeed, is_crypto
 
 
 def test_is_crypto():

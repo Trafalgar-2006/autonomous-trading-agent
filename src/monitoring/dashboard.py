@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import logging
 
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
-from ..core.models import Signal, Position
+from ..core.models import Position, Signal
 
 logger = logging.getLogger(__name__)
 console = Console(force_terminal=True)
@@ -42,7 +42,7 @@ class CLIDashboard:
         for sig in signals:
             action_style = "green bold" if sig.action.value == "buy" else "red bold"
             conf_pct = f"{sig.confidence:.0%}"
-            
+
             if sig.confidence >= 0.7:
                 conf_style = "green"
             elif sig.confidence >= 0.5:
@@ -108,7 +108,7 @@ class CLIDashboard:
         risk_status: dict,
     ):
         """Display account status, positions, and risk info."""
-        
+
         # ── Account Panel ─────────────────────────────────────
         equity = account.get("equity", 0)
         cash = account.get("cash", 0)
@@ -143,9 +143,9 @@ class CLIDashboard:
                 pnl = p.unrealized_pnl
                 total_pnl += pnl
                 pnl_pct = p.unrealized_pnl_pct * 100
-                
+
                 pnl_style = "green" if pnl >= 0 else "red"
-                
+
                 pos_table.add_row(
                     p.symbol,
                     f"{p.quantity:.4f}",
@@ -157,7 +157,7 @@ class CLIDashboard:
                 )
 
             console.print(pos_table)
-            
+
             total_style = "green" if total_pnl >= 0 else "red"
             console.print(f"Total Unrealized P&L: [{total_style}]${total_pnl:.2f}[/{total_style}]")
         else:
@@ -175,7 +175,7 @@ class CLIDashboard:
             f"Consecutive Losses: {consecutive}\n"
             f"Circuit Breaker: {'ACTIVE' if cooldown else 'OK'}"
         )
-        
+
         border = "red" if cooldown else "blue"
         console.print(Panel(risk_text, title="Risk Status", border_style=border))
 
@@ -187,7 +187,7 @@ class CLIDashboard:
         else:
             style = "red"
             label = "LOSS"
-        
+
         console.print(
             f"[{style} bold]{label}[/{style} bold] "
             f"{symbol}: P&L=${pnl:.2f} ({pnl_pct:.2%}) [{reason}]"

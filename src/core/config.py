@@ -9,7 +9,6 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-
 # Load .env file
 load_dotenv()
 
@@ -51,7 +50,7 @@ class Config:
     def _load_yaml(path: Path) -> dict:
         """Load a YAML file."""
         if path.exists():
-            with open(path, "r") as f:
+            with open(path) as f:
                 return yaml.safe_load(f) or {}
         return {}
 
@@ -164,6 +163,11 @@ class Config:
     @property
     def correlation_threshold(self) -> float:
         return self.risk.get("correlation_threshold", 0.70)
+
+    @property
+    def max_adv_pct(self) -> float:
+        """Max fraction of a name's average daily dollar volume per position."""
+        return self.risk.get("max_adv_pct", 0.01)
 
     @property
     def max_open_positions(self) -> int:

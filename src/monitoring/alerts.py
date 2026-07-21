@@ -23,7 +23,7 @@ class TelegramAlerts:
         self.bot_token = config.telegram_bot_token
         self.chat_id = config.telegram_chat_id
         self.enabled = bool(self.bot_token and self.chat_id)
-        
+
         if self.enabled:
             logger.info("Telegram alerts enabled")
         else:
@@ -56,7 +56,7 @@ class TelegramAlerts:
         """Send a formatted signal notification."""
         emoji = "BUY" if signal.action.value == "buy" else "SELL"
         regime = signal.regime.value if signal.regime else "unknown"
-        
+
         msg = (
             f"<b>{emoji} Signal: {signal.symbol}</b>\n"
             f"Strategy: {signal.strategy}\n"
@@ -64,12 +64,12 @@ class TelegramAlerts:
             f"Price: ${signal.entry_price:.2f}\n"
             f"Regime: {regime}\n"
         )
-        
+
         if signal.stop_loss:
             msg += f"Stop Loss: ${signal.stop_loss:.2f}\n"
         if signal.take_profit:
             msg += f"Take Profit: ${signal.take_profit:.2f}\n"
-        
+
         await self.send(msg)
 
     async def notify_error(self, error: str):

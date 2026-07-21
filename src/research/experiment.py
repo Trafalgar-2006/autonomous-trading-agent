@@ -12,7 +12,6 @@ Each option can be toggled independently so we can measure its marginal effect:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import pandas as pd
 
@@ -20,13 +19,13 @@ import pandas as pd
 @dataclass
 class ExperimentConfig:
     name: str = "baseline"
-    strategies: Optional[tuple] = None   # explicit set (overrides config `enabled`)
+    strategies: tuple | None = None   # explicit set (overrides config `enabled`)
     disabled_strategies: tuple = ()
     market_filter: bool = False
     market_sma: int = 200
-    vol_target: Optional[float] = None          # annualized per-position vol target
+    vol_target: float | None = None          # annualized per-position vol target
     vol_mult_bounds: tuple = (0.5, 2.0)
-    cross_sectional_top: Optional[int] = None   # keep top-N BUYs per day
+    cross_sectional_top: int | None = None   # keep top-N BUYs per day
     # Cross-sectional momentum: ignore per-symbol strategy signals; instead rank
     # the whole universe by trailing return and long the top names.
     xs_momentum: bool = False

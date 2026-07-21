@@ -13,7 +13,7 @@ Run:
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 # Make `src` importable when launched directly by streamlit.
@@ -200,6 +200,24 @@ with right:
                f"max exposure {cfg.max_total_exposure:.0%} · "
                f"risk/trade {cfg.max_risk_per_trade:.1%} · "
                f"market filter {'ON' if cfg.market_filter else 'OFF'}")
+
+st.subheader("Execution quality")
+slip = store.get_slippage_stats()
+fills = store.get_fills(limit=50)
+if slip and (slip.get("n") or 0) > 0:
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Fills recorded", int(slip.get("n") or 0))
+    s2.metric("Avg slippage", f"{slip.get('avg_bps') or 0:.1f} bps")
+    s3.metric("Worst slippage", f"{slip.get('worst_bps') or 0:.1f} bps")
+    st.caption("Positive = worse than expected. Compare with the backtest's 5 bps assumption.")
+    with st.expander("Recent fills"):
+        st.dataframe(
+            pd.DataFrame(fills)[["timestamp", "symbol", "side", "expected_price",
+                                 "fill_price", "quantity", "slippage_bps", "status"]],
+            width="stretch", hide_index=True,
+        )
+else:
+    st.caption("No fills recorded yet — they appear once the agent executes an order.")
 
 st.subheader("Recent trades")
 trades = store.get_trades(limit=50)

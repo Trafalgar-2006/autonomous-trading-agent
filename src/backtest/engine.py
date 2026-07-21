@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 import pandas as pd
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich import box
 
 from ..core.models import SignalAction
 from ..data.features import FeatureEngine
@@ -199,7 +198,7 @@ class BacktestEngine:
             logger.warning("Not enough data for backtest")
             return BacktestResult(initial_capital=self.initial_capital)
 
-        def bar(symbol: str, date) -> Optional[pd.Series]:
+        def bar(symbol: str, date) -> pd.Series | None:
             df = enriched.get(symbol)
             if df is None or date not in df.index:
                 return None
@@ -258,7 +257,7 @@ class BacktestEngine:
                 if row is None:
                     continue
                 pos = positions[symbol]
-                o, h, l = float(row["open"]), float(row["high"]), float(row["low"])
+                o, h, lo = float(row["open"]), float(row["high"]), float(row["low"])
                 exit_price = None
                 action = None
 
@@ -266,7 +265,7 @@ class BacktestEngine:
                 target = pos.get("take_profit")
 
                 # Stop takes priority (conservative). Gap-through fills at the open.
-                if stop and l <= stop:
+                if stop and lo <= stop:
                     exit_price = o if o < stop else stop
                     action = "STOP_LOSS"
                 elif target and h >= target:

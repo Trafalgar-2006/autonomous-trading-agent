@@ -11,7 +11,6 @@ Signals based on:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import pandas as pd
 
@@ -27,7 +26,7 @@ class MomentumStrategy(BaseStrategy):
     def __init__(self):
         super().__init__("momentum")
 
-    def analyze(self, symbol: str, df: pd.DataFrame) -> Optional[Signal]:
+    def analyze(self, symbol: str, df: pd.DataFrame) -> Signal | None:
         """Analyze for momentum signals."""
         if df is None or len(df) < 50:
             return None

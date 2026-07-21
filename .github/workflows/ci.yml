@@ -31,5 +31,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run test suite
-        run: pytest -q
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Run test suite with coverage
+        run: pytest -q --cov=src --cov-report=term-missing --cov-report=xml
+
+      - name: Config sanity check
+        run: python -c "from src.core.config import Config; from src.core.validate import validate_config; e,w = validate_config(Config()); print('warnings:', w); assert not e, e"

@@ -14,7 +14,6 @@ evidence showed the filter hurts relative-momentum returns).
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import pandas as pd
 
@@ -29,7 +28,7 @@ class CrossSectionalMomentum:
     name = "xs_momentum"
 
     def __init__(self, lookback: int = 252, top_n: int = 8,
-                 vol_target: Optional[float] = None):
+                 vol_target: float | None = None):
         self.lookback = lookback
         self.top_n = top_n
         self.vol_target = vol_target
@@ -48,7 +47,7 @@ class CrossSectionalMomentum:
         return scores
 
     def build_signals(self, enriched: dict[str, pd.DataFrame],
-                      held: Optional[set] = None) -> list[Signal]:
+                      held: set | None = None) -> list[Signal]:
         """
         Emit BUY for top-N names not held and SELL for held names that have
         dropped out of the top-N (rotation). `held` is the set of currently

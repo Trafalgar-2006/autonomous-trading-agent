@@ -6,19 +6,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import (
-    MarketOrderRequest,
-    LimitOrderRequest,
-    GetAssetsRequest,
-)
-from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass
 from alpaca.common.exceptions import APIError
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
 from ..core.config import Config
-from ..core.models import Order, Side, OrderType, OrderStatus, Position
+from ..core.models import Order, OrderStatus, OrderType, Position, Side
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +32,10 @@ class AlpacaBroker:
     def __init__(self):
         self.config = Config()
         self.client = None
-        
+
         api_key = self.config.alpaca_api_key
         secret_key = self.config.alpaca_secret_key
-        
+
         if not api_key or api_key == "your_api_key_here":
             logger.warning(
                 "No Alpaca API keys configured for trading. "
@@ -151,10 +146,10 @@ class AlpacaBroker:
                     )
 
             result = self.client.submit_order(request)
-            
+
             order.broker_order_id = str(result.id)
             order.status = OrderStatus.SUBMITTED
-            
+
             logger.info(
                 f"Order submitted: {order.side.value.upper()} {order.quantity:.4f} "
                 f"{order.symbol} (broker_id={order.broker_order_id})"
@@ -169,6 +164,26 @@ class AlpacaBroker:
             order.status = OrderStatus.REJECTED
             logger.error(f"Order error: {e}")
             return order
+
+    def get_order(self, broker_order_id: str) -> dict:
+        """
+        Fetch an order's current state from the broker.
+
+        Returns {status, filled_qty, filled_avg_price} — used to record the
+        real fill price and measure slippage against what we expected.
+        """
+        if self.client is None or not broker_order_id:
+            return {}
+        try:
+            o = self.client.get_order_by_id(broker_order_id)
+            return {
+                "status": str(getattr(o, "status", "")),
+                "filled_qty": float(getattr(o, "filled_qty", 0) or 0),
+                "filled_avg_price": float(getattr(o, "filled_avg_price", 0) or 0),
+            }
+        except Exception as e:
+            logger.debug(f"Could not fetch order {broker_order_id}: {e}")
+            return {}
 
     def cancel_order(self, broker_order_id: str) -> bool:
         """Cancel an open order."""
@@ -228,7 +243,7 @@ class AlpacaBroker:
         except APIError:
             return False
 
-    def get_next_market_open(self) -> Optional[str]:
+    def get_next_market_open(self) -> str | None:
         """Get the next market open time."""
         if self.client is None:
             return None

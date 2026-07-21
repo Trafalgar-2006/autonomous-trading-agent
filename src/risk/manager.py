@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
 
 from ..core.config import Config
-from ..core.models import Signal, SignalAction, Order, Side, Position
+from ..core.models import Order, Position, Side, Signal, SignalAction
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +33,15 @@ class RiskManager:
 
     def __init__(self):
         self.config = Config()
-        
+
         # Daily P&L tracking
         self._daily_pnl: float = 0.0
         self._daily_pnl_reset: datetime = datetime.utcnow()
         self._weekly_pnl: float = 0.0
         self._weekly_pnl_reset: datetime = datetime.utcnow()
         self._consecutive_losses: int = 0
-        self._cooldown_until: Optional[datetime] = None
-        
+        self._cooldown_until: datetime | None = None
+
         logger.info("RiskManager initialized")
 
     @property
@@ -59,26 +58,26 @@ class RiskManager:
     def update_daily_pnl(self, pnl: float):
         """Update daily P&L tracker after a trade closes."""
         now = datetime.utcnow()
-        
+
         # Reset daily counter if new day
         if now.date() > self._daily_pnl_reset.date():
             self._daily_pnl = 0.0
             self._daily_pnl_reset = now
-        
+
         # Reset weekly counter if new week
         if (now - self._weekly_pnl_reset).days >= 7:
             self._weekly_pnl = 0.0
             self._weekly_pnl_reset = now
-        
+
         self._daily_pnl += pnl
         self._weekly_pnl += pnl
-        
+
         # Track consecutive losses
         if pnl < 0:
             self._consecutive_losses += 1
         else:
             self._consecutive_losses = 0
-        
+
         # Check circuit breakers — only LOSSES should trip them, never profits.
         equity = self.config.initial_capital  # Simplified; in production, use live equity
 
@@ -90,7 +89,7 @@ class RiskManager:
 
         if weekly_loss_pct > self.config.max_weekly_loss:
             self._activate_cooldown("weekly loss limit exceeded")
-        
+
         if self._consecutive_losses >= self.config.max_consecutive_losses:
             self._activate_cooldown(f"{self._consecutive_losses} consecutive losses")
 
@@ -109,7 +108,7 @@ class RiskManager:
         positions: list[Position],
         equity: float,
         cash: float,
-    ) -> Optional[Order]:
+    ) -> Order | None:
         """
         Evaluate a signal against risk rules.
         
@@ -141,7 +140,7 @@ class RiskManager:
             return None
 
         # ── 4. BUY checks ────────────────────────────────────
-        
+
         # Check max positions
         if len(positions) >= self.config.max_open_positions:
             logger.info(f"Signal rejected: max positions ({self.config.max_open_positions}) reached")
@@ -161,7 +160,7 @@ class RiskManager:
 
         # ── 5. Position sizing ────────────────────────────────
         quantity = self._calculate_position_size(signal, equity, cash)
-        
+
         if quantity is None or quantity <= 0:
             logger.info(f"Signal rejected: calculated position size is zero for {signal.symbol}")
             return None
@@ -186,7 +185,7 @@ class RiskManager:
         signal: Signal,
         equity: float,
         cash: float,
-    ) -> Optional[float]:
+    ) -> float | None:
         """
         Calculate position size using fixed fractional method.
         
@@ -222,6 +221,18 @@ class RiskManager:
         # Volatility-target multiplier (set by the ensemble when vol_target is on)
         size_mult = signal.reasoning.get("size_mult", 1.0)
         risk_based_qty *= size_mult
+
+        # Liquidity guard: never take more than max_adv_pct of the name's
+        # average daily dollar volume — otherwise our own order moves the price
+        # and the backtest's fill assumptions stop being believable.
+        adv_notional = signal.reasoning.get("adv_notional")
+        max_adv_pct = self.config.max_adv_pct
+        if adv_notional and max_adv_pct and adv_notional > 0:
+            liquidity_cap_qty = (adv_notional * max_adv_pct) / price
+            if liquidity_cap_qty < risk_based_qty:
+                logger.info(f"Liquidity guard: capping {signal.symbol} to "
+                            f"{max_adv_pct:.1%} of ADV")
+            risk_based_qty = min(risk_based_qty, liquidity_cap_qty)
 
         # Capital-constrained sizing
         capital_based_qty = min(available_capital, max_position_value) / price

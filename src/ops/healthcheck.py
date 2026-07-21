@@ -15,13 +15,12 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 HEARTBEAT_PATH = Path("data/heartbeat.txt")
 DEFAULT_MAX_AGE = 5400  # 90 minutes
 
 
-def heartbeat_age_seconds(path: Path = HEARTBEAT_PATH) -> Optional[float]:
+def heartbeat_age_seconds(path: Path = HEARTBEAT_PATH) -> float | None:
     """Seconds since the last heartbeat, or None if missing/unreadable."""
     if not path.exists():
         return None
@@ -32,7 +31,7 @@ def heartbeat_age_seconds(path: Path = HEARTBEAT_PATH) -> Optional[float]:
     return (datetime.utcnow() - ts).total_seconds()
 
 
-def check(max_age: Optional[int] = None, path: Path = HEARTBEAT_PATH) -> tuple[bool, str]:
+def check(max_age: int | None = None, path: Path = HEARTBEAT_PATH) -> tuple[bool, str]:
     """Return (healthy, message)."""
     limit = max_age if max_age is not None else int(
         os.getenv("HEARTBEAT_MAX_AGE", DEFAULT_MAX_AGE))

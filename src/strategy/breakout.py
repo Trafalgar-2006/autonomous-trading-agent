@@ -10,7 +10,6 @@ Signals based on:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import pandas as pd
 
@@ -26,7 +25,7 @@ class BreakoutStrategy(BaseStrategy):
     def __init__(self):
         super().__init__("breakout")
 
-    def analyze(self, symbol: str, df: pd.DataFrame) -> Optional[Signal]:
+    def analyze(self, symbol: str, df: pd.DataFrame) -> Signal | None:
         """Analyze for breakout signals."""
         if df is None or len(df) < 30:
             return None

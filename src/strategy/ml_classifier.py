@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import pickle
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -70,8 +69,8 @@ class RegimeClassifier:
     """ML-based market regime classifier."""
 
     def __init__(self):
-        self.model: Optional[RandomForestClassifier] = None
-        self.scaler: Optional[StandardScaler] = None
+        self.model: RandomForestClassifier | None = None
+        self.scaler: StandardScaler | None = None
         self._load_model()
 
     def _load_model(self):
@@ -96,11 +95,11 @@ class RegimeClassifier:
     def _label_regime(self, df: pd.DataFrame) -> pd.Series:
         """Create training labels from price data."""
         labels = pd.Series(index=df.index, dtype=str)
-        
+
         returns_20d = df["close"].pct_change(20)
         volatility = df["close"].pct_change().rolling(20).std() * np.sqrt(252)
         vol_median = volatility.median()
-        
+
         for i in range(len(df)):
             ret = returns_20d.iloc[i] if pd.notna(returns_20d.iloc[i]) else 0
             vol = volatility.iloc[i] if pd.notna(volatility.iloc[i]) else vol_median
@@ -119,7 +118,7 @@ class RegimeClassifier:
 
         return labels
 
-    def _extract_features(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    def _extract_features(self, df: pd.DataFrame) -> pd.DataFrame | None:
         """Extract feature matrix from DataFrame."""
         available = [f for f in FEATURES if f in df.columns]
         if len(available) < len(FEATURES) * 0.7:
@@ -139,7 +138,7 @@ class RegimeClassifier:
         all_features = []
         all_labels = []
 
-        for symbol, df in data.items():
+        for df in data.values():
             features = self._extract_features(df)
             if features is None or len(features) < 60:
                 continue
@@ -226,7 +225,7 @@ class RegimeClassifier:
             if feats is not None and not feats.empty:
                 try:
                     preds = self.model.predict(self.scaler.transform(feats))
-                    for date, p in zip(feats.index, preds):
+                    for date, p in zip(feats.index, preds, strict=False):
                         out[date] = MarketRegime(p)
                     return out
                 except Exception as e:

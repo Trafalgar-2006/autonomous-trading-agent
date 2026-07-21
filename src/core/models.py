@@ -10,8 +10,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
-
 
 # ── Enums ──────────────────────────────────────────────────────
 
@@ -86,11 +84,11 @@ class Signal:
     action: SignalAction
     strategy: str
     confidence: float  # 0.0 to 1.0
-    entry_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    entry_price: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     reasoning: dict = field(default_factory=dict)
-    regime: Optional[MarketRegime] = None
+    regime: MarketRegime | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
@@ -102,10 +100,10 @@ class Order:
     side: Side
     quantity: float
     order_type: OrderType = OrderType.MARKET
-    limit_price: Optional[float] = None
+    limit_price: float | None = None
     status: OrderStatus = OrderStatus.PENDING
-    broker_order_id: Optional[str] = None
-    signal_id: Optional[str] = None
+    broker_order_id: str | None = None
+    signal_id: str | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     created_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -136,18 +134,18 @@ class Trade:
     """A completed or open trade."""
     symbol: str
     side: Side
-    strategy: Optional[str] = None
-    entry_time: Optional[datetime] = None
+    strategy: str | None = None
+    entry_time: datetime | None = None
     entry_price: float = 0.0
     quantity: float = 0.0
-    exit_time: Optional[datetime] = None
+    exit_time: datetime | None = None
     exit_price: float = 0.0
-    exit_reason: Optional[str] = None
+    exit_reason: str | None = None
     pnl: float = 0.0
     pnl_pct: float = 0.0
     commission: float = 0.0
     outcome: TradeOutcome = TradeOutcome.OPEN
-    signal_id: Optional[str] = None
+    signal_id: str | None = None
     entry_reasoning: dict = field(default_factory=dict)
     exit_reasoning: dict = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
@@ -157,15 +155,15 @@ class Trade:
         self.exit_price = exit_price
         self.exit_time = exit_time
         self.exit_reason = exit_reason
-        
+
         if self.side == Side.BUY:
             self.pnl = (exit_price - self.entry_price) * self.quantity - self.commission
         else:
             self.pnl = (self.entry_price - exit_price) * self.quantity - self.commission
-        
+
         if self.entry_price > 0:
             self.pnl_pct = self.pnl / (self.entry_price * self.quantity)
-        
+
         if self.pnl > 0.001:
             self.outcome = TradeOutcome.WIN
         elif self.pnl < -0.001:
@@ -198,20 +196,20 @@ class DecisionMemo:
     signal_strength: float                 # 0..1 (from ensemble confidence)
     risk_level: str = "unknown"            # low | medium | high
     # Trade plan
-    entry: Optional[float] = None
-    target: Optional[float] = None
-    stop: Optional[float] = None
-    invalidation: Optional[float] = None   # level that proves the setup wrong
+    entry: float | None = None
+    target: float | None = None
+    stop: float | None = None
+    invalidation: float | None = None   # level that proves the setup wrong
     timeframe: str = "1Day"
-    risk_reward: Optional[float] = None
+    risk_reward: float | None = None
     # Sizing (filled when risk approves)
     quantity: float = 0.0
     dollar_risk: float = 0.0
     # Context
-    regime: Optional[MarketRegime] = None
+    regime: MarketRegime | None = None
     rationale: str = ""                    # one-line reason for the setup
     reasons: list = field(default_factory=list)  # why this status was assigned
-    signal_id: Optional[str] = None
+    signal_id: str | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     timestamp: datetime = field(default_factory=datetime.utcnow)
 

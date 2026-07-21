@@ -2,11 +2,15 @@
 
 from datetime import datetime
 
+from src.core.models import (
+    DecisionStatus,
+    Position,
+    Side,
+    Signal,
+    SignalAction,
+)
 from src.decision.engine import DecisionEngine, compute_risk_reward
 from src.risk.manager import RiskManager
-from src.core.models import (
-    Signal, SignalAction, Position, Side, DecisionStatus,
-)
 
 
 def make_signal(action=SignalAction.BUY, symbol="AAPL", price=100.0,

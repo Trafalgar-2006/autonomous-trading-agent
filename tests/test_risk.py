@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
+from src.core.models import Position, Side, Signal, SignalAction
 from src.risk.manager import RiskManager
-from src.core.models import Signal, SignalAction, Position, Side
 
 
 def make_signal(action=SignalAction.BUY, symbol="AAPL", price=100.0, stop=95.0):

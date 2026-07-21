@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 from .models import Event, EventType
 
@@ -40,7 +40,7 @@ class EventBus:
     async def publish(self, event: Event):
         """Publish an event to all subscribers."""
         self._history.append(event)
-        
+
         # Keep history bounded
         if len(self._history) > 1000:
             self._history = self._history[-500:]
@@ -55,7 +55,7 @@ class EventBus:
                         handler(event)
                 except Exception as e:
                     logger.error(f"Error in event handler {handler.__name__}: {e}")
-        
+
         logger.debug(f"Event published: {event.type.value} from {event.source}")
 
     @property

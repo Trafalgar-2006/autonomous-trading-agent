@@ -72,7 +72,7 @@ def strategy_attribution(trades: list[dict]) -> dict:
         d["pnl"] += t.get("pnl", 0.0)
         if t.get("pnl", 0.0) > 0:
             d["wins"] += 1
-    for s, d in out.items():
+    for d in out.values():
         d["win_rate"] = d["wins"] / d["trades"] if d["trades"] else 0.0
     return out
 

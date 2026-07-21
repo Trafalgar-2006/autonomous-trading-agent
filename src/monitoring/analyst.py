@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 from ..core.config import Config
 
@@ -125,7 +124,7 @@ class AIAnalyst:
         else:
             logger.info("AI Analyst disabled (no ANTHROPIC_API_KEY or disabled in config)")
 
-    async def _complete(self, user: str, max_tokens: int = 1024) -> Optional[str]:
+    async def _complete(self, user: str, max_tokens: int = 1024) -> str | None:
         if not self.enabled:
             return None
         kwargs = dict(model=self.model, max_tokens=max_tokens,
@@ -143,11 +142,11 @@ class AIAnalyst:
             logger.warning(f"AI Analyst request failed: {e}")
             return None
 
-    async def morning_brief(self, account, positions, decisions) -> Optional[str]:
+    async def morning_brief(self, account, positions, decisions) -> str | None:
         return await self._complete(build_morning_prompt(account, positions, decisions))
 
-    async def explain_decision(self, memo) -> Optional[str]:
+    async def explain_decision(self, memo) -> str | None:
         return await self._complete(build_decision_prompt(memo), max_tokens=400)
 
-    async def eod_narrative(self, account, positions, risk_status, stats) -> Optional[str]:
+    async def eod_narrative(self, account, positions, risk_status, stats) -> str | None:
         return await self._complete(build_eod_prompt(account, positions, risk_status, stats))

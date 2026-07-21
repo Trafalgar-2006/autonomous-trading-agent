@@ -1,6 +1,6 @@
 """Tests for the per-strategy performance feedback loop."""
 
-from src.strategy.ensemble import performance_multiplier, SignalEnsemble
+from src.strategy.ensemble import SignalEnsemble, performance_multiplier
 
 
 def test_multiplier_neutral_below_min_trades():

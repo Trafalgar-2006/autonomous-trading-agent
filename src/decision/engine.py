@@ -17,19 +17,23 @@ the reasoning trail.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from ..core.config import Config
 from ..core.models import (
-    Signal, SignalAction, Position, DecisionMemo, DecisionStatus, MarketRegime,
+    DecisionMemo,
+    DecisionStatus,
+    MarketRegime,
+    Position,
+    Signal,
+    SignalAction,
 )
 from ..risk.manager import RiskManager
 
 logger = logging.getLogger(__name__)
 
 
-def compute_risk_reward(entry: Optional[float], stop: Optional[float],
-                        target: Optional[float]) -> Optional[float]:
+def compute_risk_reward(entry: float | None, stop: float | None,
+                        target: float | None) -> float | None:
     """Reward:risk for a long setup. None if it can't be computed."""
     if not entry or not stop or not target:
         return None
@@ -40,7 +44,7 @@ def compute_risk_reward(entry: Optional[float], stop: Optional[float],
     return reward / risk
 
 
-def _risk_level(signal: Signal, regime: Optional[MarketRegime]) -> str:
+def _risk_level(signal: Signal, regime: MarketRegime | None) -> str:
     """Coarse risk label from volatility context."""
     if regime == MarketRegime.HIGH_VOLATILITY:
         return "high"
@@ -56,7 +60,7 @@ def _risk_level(signal: Signal, regime: Optional[MarketRegime]) -> str:
     return "medium"
 
 
-def _invalidation(signal: Signal) -> Optional[float]:
+def _invalidation(signal: Signal) -> float | None:
     """
     Level that proves the setup wrong (distinct from the risk stop).
 
@@ -72,7 +76,7 @@ def _invalidation(signal: Signal) -> Optional[float]:
 class DecisionEngine:
     """Builds DecisionMemos from signals using risk checks + soft gates."""
 
-    def __init__(self, risk_manager: Optional[RiskManager] = None):
+    def __init__(self, risk_manager: RiskManager | None = None):
         self.config = Config()
         self.risk_manager = risk_manager or RiskManager()
 
@@ -83,7 +87,7 @@ class DecisionEngine:
         equity: float,
         cash: float,
         market_ok: bool = True,
-        correlations: Optional[dict] = None,
+        correlations: dict | None = None,
     ) -> DecisionMemo:
         """Evaluate a signal and produce a classified decision memo.
 
@@ -185,8 +189,9 @@ class DecisionEngine:
         correlated = [p for p in positions if row.get(p.symbol, 0.0) >= threshold]
         if not correlated:
             return None
+        # Measure exposure from currently-held correlated names; the new
+        # position's own size is applied separately by the risk manager.
         correlated_value = sum(p.market_value for p in correlated)
-        new_value = (signal.entry_price or 0) * 0  # sizing added by risk; use held only
         exposure = correlated_value / equity
         if exposure >= limit:
             names = ", ".join(p.symbol for p in correlated[:3])

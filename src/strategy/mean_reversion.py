@@ -10,7 +10,6 @@ Signals based on:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import pandas as pd
 
@@ -26,7 +25,7 @@ class MeanReversionStrategy(BaseStrategy):
     def __init__(self):
         super().__init__("mean_reversion")
 
-    def analyze(self, symbol: str, df: pd.DataFrame) -> Optional[Signal]:
+    def analyze(self, symbol: str, df: pd.DataFrame) -> Signal | None:
         """Analyze for mean reversion signals."""
         if df is None or len(df) < 30:
             return None

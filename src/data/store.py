@@ -103,6 +103,20 @@ class DataStore:
                 max_drawdown REAL
             );
 
+            CREATE TABLE IF NOT EXISTS fills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                symbol TEXT NOT NULL,
+                side TEXT,
+                order_id TEXT,
+                broker_order_id TEXT,
+                expected_price REAL,
+                fill_price REAL,
+                quantity REAL,
+                slippage_bps REAL,
+                status TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS decisions (
                 id TEXT PRIMARY KEY,
                 timestamp TEXT,
@@ -197,6 +211,44 @@ class DataStore:
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving trade: {e}")
+
+    def save_fill(self, symbol: str, side: str, order_id: str, broker_order_id: str,
+                  expected_price: float, fill_price: float, quantity: float,
+                  status: str) -> float:
+        """
+        Record an execution and its slippage. Returns slippage in bps
+        (positive = worse than expected, i.e. paid more / received less).
+        """
+        slippage_bps = 0.0
+        try:
+            if expected_price and fill_price and expected_price > 0:
+                diff = (fill_price - expected_price) / expected_price
+                # Selling worse means receiving less, so flip the sign.
+                slippage_bps = float(diff * 1e4 * (1 if side == "buy" else -1))
+            self.conn.execute(
+                "INSERT INTO fills (timestamp, symbol, side, order_id, broker_order_id, "
+                "expected_price, fill_price, quantity, slippage_bps, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (datetime.utcnow().isoformat(), symbol, side, order_id, broker_order_id,
+                 expected_price, fill_price, quantity, slippage_bps, status),
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving fill: {e}")
+        return slippage_bps
+
+    def get_fills(self, limit: int = 200) -> list[dict]:
+        cursor = self.conn.execute(
+            "SELECT * FROM fills ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in cursor.fetchall()]
+
+    def get_slippage_stats(self) -> dict:
+        """Realized slippage — the gap between backtest assumptions and reality."""
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) n, AVG(slippage_bps) avg_bps, MAX(slippage_bps) worst_bps "
+            "FROM fills WHERE fill_price IS NOT NULL AND fill_price > 0")
+        row = cursor.fetchone()
+        return dict(row) if row else {}
 
     def save_snapshot(self, account: dict, positions: list, risk_status: dict) -> None:
         """Persist a portfolio snapshot (drives the dashboard's equity curve)."""

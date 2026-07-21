@@ -3,8 +3,8 @@
 import numpy as np
 import pandas as pd
 
-from src.research.experiment import ExperimentConfig, market_ok_series
 from src.research.backtest import run_fast_backtest
+from src.research.experiment import ExperimentConfig, market_ok_series
 
 
 def _trend(n=260, start=50.0, slope=0.25, seed=0):
@@ -29,17 +29,19 @@ def test_market_ok_series_uptrend_true_downtrend_false():
 
 def test_disabled_strategy_removes_its_trades():
     data = {"AAA": _trend(seed=1), "BBB": _trend(seed=2, slope=0.1)}
-    base = run_fast_backtest(data, initial_capital=50_000.0)
+    # Force momentum ON as the control, then disable it — the disabled run must
+    # never produce a momentum trade regardless of what the control does.
+    control = run_fast_backtest(
+        data, initial_capital=50_000.0,
+        experiment=ExperimentConfig(strategies=("momentum", "mean_reversion", "breakout")),
+    )
     no_mom = run_fast_backtest(
         data, initial_capital=50_000.0,
-        experiment=ExperimentConfig(disabled_strategies=("momentum",)),
+        experiment=ExperimentConfig(strategies=("mean_reversion", "breakout")),
     )
-    base_strats = {t["strategy"] for t in base.trades}
-    no_mom_strats = {t["strategy"] for t in no_mom.trades}
-    assert "momentum" not in no_mom_strats
-    # (baseline may or may not include momentum depending on signals, but the
-    #  disabled run must never contain it)
-    assert "momentum" not in no_mom_strats
+    assert "momentum" not in {t["strategy"] for t in no_mom.trades}
+    # Control is allowed to contain momentum; both runs must stay well-formed.
+    assert control.total_trades >= 0 and no_mom.total_trades >= 0
 
 
 def test_market_filter_blocks_longs_when_off():

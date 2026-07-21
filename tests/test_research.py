@@ -1,15 +1,13 @@
 """Tests for research metrics, fast backtest, and walk-forward harness."""
 
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
+from src.backtest.engine import BacktestResult
 from src.research import metrics as M
 from src.research.backtest import run_fast_backtest
 from src.research.walkforward import WalkForward
-from src.backtest.engine import BacktestResult
-
 
 # ── Metrics ──────────────────────────────────────────────────────
 

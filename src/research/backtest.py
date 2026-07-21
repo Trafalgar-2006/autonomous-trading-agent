@@ -16,7 +16,6 @@ Speedup comes from:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import pandas as pd
 
@@ -94,8 +93,8 @@ def build_fast_signal_fn(
     ensemble: SignalEnsemble,
     window: int = 320,
     trade_start=None,
-    experiment: Optional[ExperimentConfig] = None,
-    market_ok: Optional[dict] = None,
+    experiment: ExperimentConfig | None = None,
+    market_ok: dict | None = None,
 ):
     """
     Build a `signal_fn(date) -> list[Signal]` using precomputed context.
@@ -182,7 +181,7 @@ def build_fast_signal_fn(
 
 def run_fast_backtest(
     data: dict[str, pd.DataFrame],
-    ensemble: Optional[SignalEnsemble] = None,
+    ensemble: SignalEnsemble | None = None,
     initial_capital: float = 100_000.0,
     trade_start=None,
     slippage_bps: float = 5.0,
@@ -190,8 +189,8 @@ def run_fast_backtest(
     max_risk_per_trade: float = 0.01,
     max_position_size: float = 0.10,
     max_positions: int = 8,
-    experiment: Optional[ExperimentConfig] = None,
-    market_ok: Optional[dict] = None,
+    experiment: ExperimentConfig | None = None,
+    market_ok: dict | None = None,
 ) -> BacktestResult:
     """Run the fast research backtest and return a BacktestResult."""
     exp = experiment or ExperimentConfig()

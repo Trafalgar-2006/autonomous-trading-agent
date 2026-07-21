@@ -35,22 +35,22 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
+from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
-from rich import box
 
 from .core.config import Config
 from .core.event_bus import EventBus
 from .core.models import DecisionStatus
-from .data.feed import MarketDataFeed
 from .data.features import FeatureEngine
-from .data.store import DataStore
+from .data.feed import MarketDataFeed
 from .data.scanner import MarketScanner
-from .strategy.ensemble import SignalEnsemble
+from .data.store import DataStore
 from .execution.order_manager import OrderManager
 from .monitoring.alerts import TelegramAlerts
-from .monitoring.dashboard import CLIDashboard
 from .monitoring.analyst import AIAnalyst
+from .monitoring.dashboard import CLIDashboard
+from .strategy.ensemble import SignalEnsemble
 
 console = Console(force_terminal=True)
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ class TradingAgent:
             for e in errors:
                 console.print(f"[bold red]Config error:[/bold red] {e}")
             raise SystemExit("Invalid configuration — fix config/ before starting.")
-        
+
         # Initialize components
         self.feed = MarketDataFeed()
         self.features = FeatureEngine()
@@ -108,7 +108,7 @@ class TradingAgent:
         self.analyst = AIAnalyst()
         self.bus = EventBus()
         self.scanner = MarketScanner(self.feed)
-        
+
         # Strategy mode: 'ensemble' (TA) or 'xs_momentum' (cross-sectional momentum)
         self.xs_strategy = None
         if self.config.strategy_mode == "xs_momentum":
@@ -133,7 +133,7 @@ class TradingAgent:
         self._last_daily_date: str = ""  # tracks daily EOD summary / perf refresh
         self._market_ok: bool = True     # SPY>SMA regime flag (set each scan)
         self._correlations: dict = {}    # pairwise return correlations (set each scan)
-        
+
         self._running = False
         # Sync live equity from broker so position sizing is accurate
         account = self.order_manager.broker.get_account()
@@ -160,7 +160,7 @@ class TradingAgent:
         4. Display results
         """
         console.print("\n[bold cyan]Scanning market...[/bold cyan]\n")
-        
+
         symbols = self._active_symbols
         logger.info(f"Scanning {len(symbols)} symbols ({self.config.strategy_mode} mode)")
 
@@ -231,8 +231,8 @@ class TradingAgent:
     def _write_heartbeat(self):
         """Touch a heartbeat file each cycle so a watchdog can detect a dead agent."""
         try:
-            from pathlib import Path
             from datetime import datetime as _dt
+            from pathlib import Path
             hb = Path("data/heartbeat.txt")
             hb.parent.mkdir(parents=True, exist_ok=True)
             hb.write_text(_dt.utcnow().isoformat())
@@ -285,9 +285,11 @@ class TradingAgent:
         cash = account.get("cash", self.config.initial_capital)
 
         memos = []
-        for signal in signals:
+        # NB: named `sig`, not `signal` — that would shadow the stdlib `signal`
+        # module imported at the top of this file.
+        for sig in signals:
             memo = self.order_manager.decision_engine.build(
-                signal, positions, equity, cash, market_ok=self._market_ok,
+                sig, positions, equity, cash, market_ok=self._market_ok,
                 correlations=self._correlations)
             self.store.save_decision(memo)
             memos.append(memo)
@@ -303,7 +305,7 @@ class TradingAgent:
         """Run a single trading cycle: scan → risk check → execute."""
         try:
             signals = await self.scan()
-            
+
             if signals:
                 memos = await self.order_manager.process_signals(
                     signals, market_ok=self._market_ok, correlations=self._correlations)
@@ -341,18 +343,17 @@ class TradingAgent:
         try:
             console.print("\n[bold magenta]Running market-wide scanner...[/bold magenta]")
             new_universe = await self.scanner.scan()
-            
+
             if new_universe:
-                old_count = len(self._active_symbols)
                 self._active_symbols = new_universe
                 self._last_scan_date = datetime.now().strftime("%Y-%m-%d")
-                
+
                 new_symbols = [s for s in new_universe if s not in self.config.symbols]
                 console.print(
                     f"[green]Scanner found {len(new_symbols)} new candidates. "
                     f"Active universe: {len(self._active_symbols)} symbols[/green]"
                 )
-                
+
                 if new_symbols:
                     logger.info(f"New symbols from scanner: {new_symbols[:20]}{'...' if len(new_symbols) > 20 else ''}")
                     await self.alerts.send(
@@ -428,8 +429,8 @@ class TradingAgent:
         self._running = True
         scan_interval = self.config.settings.get("schedule", {}).get("scan_interval_minutes", 60)
         scanner_enabled = self.config.settings.get("scanner", {}).get("enabled", False)
-        
-        console.print(f"\n[bold green]Trading Agent started[/bold green]")
+
+        console.print("\n[bold green]Trading Agent started[/bold green]")
         console.print(f"   Mode: {'PAPER' if self.config.is_paper else 'LIVE'}")
         console.print(f"   Strategy: {self.config.strategy_mode.upper()}"
                       + (f" (12-mo XS momentum, top {self.xs_strategy.top_n})" if self.xs_strategy else ""))
@@ -439,10 +440,10 @@ class TradingAgent:
         console.print(f"   Market Scanner: {'ENABLED' if scanner_enabled else 'DISABLED'}")
         console.print(f"   Scan interval: {scan_interval} minutes")
         console.print(f"   Capital: ${self.config.initial_capital:.2f}")
-        console.print(f"\n   Press Ctrl+C to stop\n")
+        console.print("\n   Press Ctrl+C to stop\n")
 
         await self.alerts.send("Trading Agent started!")
-        
+
         # Run market scanner on startup if enabled
         if scanner_enabled:
             await self._run_scanner()
@@ -466,7 +467,7 @@ class TradingAgent:
                         today = datetime.now().strftime("%Y-%m-%d")
                         if today != self._last_scan_date:
                             await self._run_scanner()
-                    
+
                     await self.run_cycle()
                 elif self.config.is_paper:
                     # Paper mode: still run cycles when market is closed
@@ -641,7 +642,7 @@ class TradingAgent:
 
         # Fetch historical data
         data = self.feed.get_bars_multi(self.config.symbols, days=days)
-        
+
         if not data:
             console.print("[red]No data available for backtesting[/red]")
             return
@@ -662,10 +663,10 @@ class TradingAgent:
             max_position_size=self.config.max_position_size,
             max_positions=self.config.max_open_positions,
         )
-        
+
         result = engine.run(data)
         result.print_summary()
-        
+
         return result
 
     async def walkforward(self, days: int = 1260):
@@ -699,8 +700,8 @@ class TradingAgent:
         baseline -> drop momentum -> +market filter -> +vol targeting -> +cross-sectional.
         """
         from .data.cache import CachedFeed
-        from .research.walkforward import compare_experiments
         from .research.experiment import ExperimentConfig
+        from .research.walkforward import compare_experiments
 
         days = max(days, 2400)  # ~6.5y so folds span the 2022 bear, not just bull
         console.print(f"\n[bold cyan]Strategy experiment comparison ({days} days)...[/bold cyan]\n")
@@ -731,7 +732,7 @@ class TradingAgent:
         console.print(f"\n[bold cyan]Training ML regime classifier ({days} days)...[/bold cyan]\n")
 
         data = self.feed.get_bars_multi(self.config.symbols, days=days)
-        
+
         if not data:
             console.print("[red]No data available for training[/red]")
             return
@@ -741,26 +742,26 @@ class TradingAgent:
             enriched[symbol] = self.features.compute_all(df)
 
         success = self.ensemble.train_classifier(enriched)
-        
+
         if success:
             console.print("\n[bold green]Regime classifier trained and saved![/bold green]")
-            
+
             # Show what regime each symbol is currently in
-            from rich.table import Table
             from rich import box
-            
+            from rich.table import Table
+
             table = Table(title="Current Market Regimes", box=box.SIMPLE_HEAVY)
             table.add_column("Symbol", style="bold")
             table.add_column("Regime", style="cyan")
             table.add_column("Strategy Weights")
-            
+
             for symbol, df in enriched.items():
                 regime = self.ensemble.classifier.classify(df)
                 weights = self.ensemble.classifier.get_strategy_weights(regime)
                 weights_str = ", ".join([f"{k}={v:.1f}" for k, v in weights.items()])
-                
+
                 table.add_row(symbol, regime.value, weights_str)
-            
+
             console.print(table)
         else:
             console.print("[yellow]Not enough data to train. Try with more history.[/yellow]")
@@ -769,7 +770,7 @@ class TradingAgent:
 def main():
     """CLI entry point."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="AI Trading Agent")
     parser.add_argument(
         "command",

@@ -20,15 +20,15 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich import box
 
 from ..data.features import FeatureEngine
 from ..strategy.ensemble import SignalEnsemble
+from . import metrics as M
 from .backtest import run_fast_backtest
 from .experiment import ExperimentConfig, market_ok_series
-from . import metrics as M
 
 logger = logging.getLogger(__name__)
 console = Console(force_terminal=True)
@@ -152,7 +152,7 @@ class WalkForward:
             # OOS equity within [test_start, test_end] -> daily returns.
             fold_eq = [self.initial_capital]
             fold_dates = []
-            for d, eq in zip(result.equity_dates, result.equity_curve):
+            for d, eq in zip(result.equity_dates, result.equity_curve, strict=False):
                 if d is not None and test_start <= d <= test_end:
                     fold_eq.append(eq)
                     fold_dates.append(d)

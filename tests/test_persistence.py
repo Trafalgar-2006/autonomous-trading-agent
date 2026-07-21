@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
+from src.core.models import Side, Trade, TradeOutcome
 from src.data.store import DataStore
-from src.core.models import Trade, Side, TradeOutcome
 
 
 def make_store(tmp_path):

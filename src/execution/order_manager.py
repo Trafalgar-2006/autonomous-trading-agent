@@ -12,8 +12,16 @@ from datetime import datetime
 from ..core.config import Config
 from ..core.event_bus import EventBus
 from ..core.models import (
-    Event, EventType, Signal, SignalAction, OrderStatus,
-    Trade, Side, Position, TradeOutcome, DecisionStatus,
+    DecisionStatus,
+    Event,
+    EventType,
+    OrderStatus,
+    Position,
+    Side,
+    Signal,
+    SignalAction,
+    Trade,
+    TradeOutcome,
 )
 from ..data.store import DataStore
 from ..decision.engine import DecisionEngine
@@ -148,14 +156,14 @@ class OrderManager:
         cash: float,
     ):
         """Process a single signal through the full pipeline."""
-        
+
         # Save the signal regardless of outcome
         self.store.save_signal(signal)
 
         # ── Risk Check ────────────────────────────────────────
-        
+
         order = self.risk_manager.evaluate(signal, positions, equity, cash)
-        
+
         if not order:
             await self.bus.publish(Event(
                 type=EventType.RISK_REJECTED,
@@ -194,6 +202,9 @@ class OrderManager:
             source="order_manager",
         ))
 
+        # Record the actual fill and measure slippage vs what we expected.
+        await self._record_fill(order, expected_price=signal.entry_price or 0.0)
+
         # ── Record Trade ──────────────────────────────────────
 
         if signal.action == SignalAction.BUY:
@@ -218,7 +229,7 @@ class OrderManager:
             )
             self._active_trades[signal.symbol] = trade
             self.store.save_trade(trade)
-            
+
             logger.info(f"Trade opened: BUY {order.quantity:.4f} {signal.symbol} "
                        f"@ ${signal.entry_price:.2f}")
 
@@ -233,10 +244,10 @@ class OrderManager:
                 )
                 active_trade.exit_reasoning = signal.reasoning
                 self.store.save_trade(active_trade)
-                
+
                 # Update risk manager
                 self.risk_manager.update_daily_pnl(active_trade.pnl)
-                
+
                 del self._active_trades[signal.symbol]
 
                 emoji = "WIN" if active_trade.outcome == TradeOutcome.WIN else "LOSS"
@@ -248,6 +259,44 @@ class OrderManager:
             # Note: the SELL order submitted above already liquidates the full
             # position quantity, so we do NOT also call broker.close_position()
             # here — doing so caused a redundant second sell order.
+
+    async def _record_fill(self, order, expected_price: float,
+                           attempts: int = 3, delay: float = 1.0) -> None:
+        """
+        Poll briefly for the fill, then persist actual price + slippage.
+
+        Market orders usually fill within a second, but not always — we retry a
+        few times and record whatever state we end up with (including unfilled,
+        so partial/rejected orders are visible rather than silently lost).
+        """
+        import asyncio
+        info = {}
+        try:
+            for _ in range(attempts):
+                info = self.broker.get_order(order.broker_order_id)
+                if info.get("filled_avg_price"):
+                    break
+                await asyncio.sleep(delay)
+
+            fill_price = info.get("filled_avg_price", 0.0)
+            filled_qty = info.get("filled_qty", 0.0)
+            status = info.get("status", "unknown")
+
+            slippage = self.store.save_fill(
+                symbol=order.symbol, side=order.side.value, order_id=order.id,
+                broker_order_id=order.broker_order_id or "",
+                expected_price=expected_price, fill_price=fill_price,
+                quantity=filled_qty or order.quantity, status=status,
+            )
+            if fill_price:
+                logger.info(f"Fill: {order.symbol} {order.side.value} "
+                            f"{filled_qty:.4f} @ ${fill_price:.4f} "
+                            f"(expected ${expected_price:.4f}, slippage {slippage:+.1f} bps)")
+            else:
+                logger.warning(f"Order {order.symbol} not filled yet (status={status}) — "
+                               f"recorded for reconciliation")
+        except Exception as e:
+            logger.error(f"Could not record fill for {order.symbol}: {e}")
 
     @staticmethod
     def _reconstruct_trade(pos: Position) -> Trade:
