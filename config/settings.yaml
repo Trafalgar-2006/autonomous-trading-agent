@@ -18,11 +18,14 @@ general:
 
 # Forward test — what the walk-forward backtest predicted, so live results can be
 # compared against a number fixed IN ADVANCE (no moving the goalposts later).
-# These are the out-of-sample xs_momentum figures from `experiments`.
+# VERIFIED out-of-sample xs_momentum (12-month lookback, broad universe, 10 folds,
+# 1274 trades) walk-forward vs SPY buy-and-hold, run 2026-07-22:
+#   strategy: CAGR 27.37%, Sharpe 0.80, Sortino 2.01, MaxDD 30.0%
+#   SPY B&H:  CAGR 12.36%, Sharpe 0.77, Sortino 1.05, MaxDD 25.4%
 forward_test:
   baseline:
-    cagr: 0.264
-    sharpe: 0.78
+    cagr: 0.274
+    sharpe: 0.80
     max_drawdown: 0.30
 
 # AI Analyst — Claude-powered morning brief + EOD narrative (the "2 daily messages").

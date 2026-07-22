@@ -172,7 +172,7 @@ python -m src.main report    # check realized results vs the backtest over time
 ```
 
 Watch `report` and the Telegram messages over weeks/months and compare to the
-~26% CAGR / ~30% drawdown backtest. Switch `general.strategy_mode` to `ensemble`
+~27% CAGR / ~30% drawdown backtest. Switch `general.strategy_mode` to `ensemble`
 in `config/settings.yaml` for the lower-drawdown TA config. Enable the AI Analyst
 by adding `ANTHROPIC_API_KEY` to `.env`.
 
@@ -220,12 +220,13 @@ SPY buy-and-hold out-of-sample** on a walk-forward test (2019–2026):
 
 | Config (broad universe, OOS) | CAGR | Sharpe | Sortino | Max DD |
 |---|---|---|---|---|
-| SPY buy & hold | 12.4% | 0.77 | 1.05 | 25.4% |
-| **XS 12-month momentum (top 8)** | **26.4%** | **0.78** | **1.95** | 30.3% |
-| XS 12-month + vol target | 12.9% | 0.59 | 1.57 | 20.4% |
+| SPY buy & hold | 12.36% | 0.77 | 1.05 | 25.4% |
+| **XS 12-month momentum (top 8)** | **27.37%** | **0.80** | **2.01** | 30.0% |
 
-Robust across 10–14 month lookbacks. Enable it in `config/settings.yaml`:
-`general.strategy_mode: xs_momentum`.
+Verified 2026-07-22 over a 10-fold, 1274-trade walk-forward. Enable it in
+`config/settings.yaml`: `general.strategy_mode: xs_momentum`. Adding volatility
+targeting lowers the drawdown at some cost to return (run `experiments` to see
+the current numbers on your data).
 
 > **Honest caveats:** this is one ~7-year window that excludes the 2009 momentum
 > crash; drawdown is ~30% (tameable to ~20% via `cross_sectional.vol_target`);
