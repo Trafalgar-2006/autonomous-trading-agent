@@ -21,6 +21,9 @@ htmlcov/
 data/trading.db
 data/regime_model.pkl
 data/cache/
+data/cache_history/
+data/heartbeat.txt
+data/KILL
 *.log
 
 # ── Editors / OS ─────────────────────────────────────────
