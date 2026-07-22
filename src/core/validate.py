@@ -10,6 +10,7 @@ from __future__ import annotations
 
 VALID_STRATEGY_MODES = {"ensemble", "xs_momentum"}
 VALID_EXECUTION_MODES = {"auto", "propose"}
+VALID_BROKERS = {"alpaca", "paper"}
 
 
 def validate_config(config) -> tuple[list[str], list[str]]:
@@ -25,6 +26,10 @@ def validate_config(config) -> tuple[list[str], list[str]]:
     if config.execution_mode not in VALID_EXECUTION_MODES:
         errors.append(f"general.execution_mode '{config.execution_mode}' is not one of "
                       f"{sorted(VALID_EXECUTION_MODES)}")
+
+    broker = general.get("broker", "alpaca")
+    if broker not in VALID_BROKERS:
+        errors.append(f"general.broker '{broker}' is not one of {sorted(VALID_BROKERS)}")
 
     # ── Risk sanity: fractions must be sane fractions ──────────────
     fractions = {

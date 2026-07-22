@@ -27,7 +27,7 @@ from ..data.store import DataStore
 from ..decision.engine import DecisionEngine
 from ..risk.manager import RiskManager
 from ..risk.stops import compute_stop_level
-from .broker import AlpacaBroker
+from .factory import make_broker
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class OrderManager:
         self.store = DataStore()
         self.bus = EventBus()
         self.risk_manager = RiskManager()
-        self.broker = AlpacaBroker()
+        self.broker = make_broker()
         # Builds decision memos and shares the same RiskManager state.
         self.decision_engine = DecisionEngine(risk_manager=self.risk_manager)
 

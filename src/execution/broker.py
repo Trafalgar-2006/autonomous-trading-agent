@@ -14,11 +14,12 @@ from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
 from ..core.config import Config
 from ..core.models import Order, OrderStatus, OrderType, Position, Side
+from .base import BaseBroker
 
 logger = logging.getLogger(__name__)
 
 
-class AlpacaBroker:
+class AlpacaBroker(BaseBroker):
     """
     Alpaca Trading API wrapper.
     

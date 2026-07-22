@@ -195,6 +195,11 @@ class TradingAgent:
         for symbol, df in data.items():
             enriched[symbol] = self.features.compute_all(df)
 
+        # Mark the PaperBroker's positions to the latest prices (no-op for Alpaca).
+        if hasattr(self.order_manager.broker, "mark_prices"):
+            self.order_manager.broker.mark_prices(
+                {s: float(df["close"].iloc[-1]) for s, df in data.items() if not df.empty})
+
         # Pairwise return correlations (for the correlation filter)
         self._correlations = self._compute_correlations(data)
 
@@ -599,6 +604,21 @@ class TradingAgent:
         console.print(answer or "[dim]No answer (the log may be empty).[/dim]")
         return answer
 
+    async def diagnose(self):
+        """Portfolio-analyst diagnosis of strategy contribution and decay."""
+        if not self.analyst.enabled:
+            console.print("[yellow]AI Analyst disabled — set ANTHROPIC_API_KEY in .env[/yellow]")
+            return None
+        perf = self.store.get_strategy_performance()
+        recent = self.store.get_strategy_performance(since_days=30)
+        if not perf:
+            console.print("[dim]No closed trades yet to diagnose.[/dim]")
+            return None
+        console.print("\n[bold cyan]Strategy diagnosis...[/bold cyan]\n")
+        text = await self.analyst.diagnose_strategies(perf, recent)
+        console.print(text or "[dim]No diagnosis produced.[/dim]")
+        return text
+
     async def review(self):
         """LLM post-mortem over recently closed trades."""
         if not self.analyst.enabled:
@@ -843,7 +863,7 @@ def main():
     parser.add_argument(
         "command",
         choices=["scan", "plan", "run", "status", "report", "dashboard", "backtest",
-                 "train", "walkforward", "experiments", "ask", "review", "doctor"],
+                 "train", "walkforward", "experiments", "ask", "review", "diagnose", "doctor"],
         help="Command to execute",
     )
     parser.add_argument(
@@ -895,6 +915,8 @@ def main():
         asyncio.run(agent.ask(args.question))
     elif args.command == "review":
         asyncio.run(agent.review())
+    elif args.command == "diagnose":
+        asyncio.run(agent.diagnose())
     elif args.command == "doctor":
         ok = asyncio.run(agent.doctor())
         sys.exit(0 if ok else 1)

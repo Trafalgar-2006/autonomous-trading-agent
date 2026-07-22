@@ -383,14 +383,24 @@ class DataStore:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_strategy_performance(self) -> dict[str, dict]:
+    def get_strategy_performance(self, since_days: int | None = None) -> dict[str, dict]:
         """
         Aggregate realized performance per strategy (closed trades only).
+
+        Pass `since_days` to restrict to trades closed in the recent window
+        (used to detect decay vs the all-time record).
 
         Returns: {strategy_name: {trades, wins, losses, pnl, win_rate,
                                   gross_profit, gross_loss, profit_factor}}
         """
-        cursor = self.conn.execute("""
+        where = "outcome != 'open' AND strategy IS NOT NULL"
+        params: tuple = ()
+        if since_days is not None:
+            from datetime import timedelta
+            cutoff = (datetime.utcnow() - timedelta(days=since_days)).isoformat()
+            where += " AND COALESCE(exit_time, created_at) >= ?"
+            params = (cutoff,)
+        cursor = self.conn.execute(f"""
             SELECT
                 strategy,
                 COUNT(*) as trades,
@@ -400,9 +410,9 @@ class DataStore:
                 SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as gross_profit,
                 SUM(CASE WHEN pnl < 0 THEN -pnl ELSE 0 END) as gross_loss
             FROM trades
-            WHERE outcome != 'open' AND strategy IS NOT NULL
+            WHERE {where}
             GROUP BY strategy
-        """)
+        """, params)
         result: dict[str, dict] = {}
         for row in cursor.fetchall():
             d = dict(row)

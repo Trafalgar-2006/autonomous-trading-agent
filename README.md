@@ -78,6 +78,7 @@ python -m src.main dashboard
 
 # AI Analyst (needs ANTHROPIC_API_KEY)
 python -m src.main review                              # LLM post-mortem on closed trades
+python -m src.main diagnose                            # strategy contribution + decay analysis
 python -m src.main ask --question "why did we skip NVDA?"   # NL query over the decision log
 
 # Start continuous paper trading (Ctrl+C for graceful shutdown)
@@ -144,6 +145,18 @@ docker compose logs -f agent
 - **Kill switch:** `touch data/KILL` flattens every position and halts the agent.
 - Config is validated at startup — it refuses to run on percent-typos
   (`0.10` vs `10`), unknown strategy modes, or incoherent risk limits.
+
+## Brokers
+
+The agent talks to a `BaseBroker` interface, so switching brokers is a config
+change (`general.broker` in `config/settings.yaml`), not a rewrite:
+
+- `alpaca` — real paper/live account via API keys (default)
+- `paper` — a fully local simulated broker (`PaperBroker`) that needs **no
+  account and no keys**. It fills orders at the signal price plus slippage,
+  marks positions to market each cycle, and persists to `data/paper_state.json`.
+  Great for demos, offline development, and running the whole loop with nothing
+  configured. Future adapters (IBKR, Binance) implement the same interface.
 
 ## Security & key hygiene
 

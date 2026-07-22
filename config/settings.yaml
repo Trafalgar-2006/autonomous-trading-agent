@@ -6,6 +6,7 @@ general:
   name: "TradingAgent"
   version: "0.2.0"
   mode: "paper"                  # paper | live
+  broker: "alpaca"               # alpaca (real paper/live via API) | paper (local simulation, no account/keys)
   execution_mode: "auto"         # auto = trade APPROVED signals | propose = memos only, human executes
   # Strategy engine:
   #   ensemble     = mean_reversion + breakout, with SPY>200SMA market filter (lower drawdown, does NOT beat SPY)

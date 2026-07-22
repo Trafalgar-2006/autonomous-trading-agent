@@ -146,6 +146,36 @@ def build_query_prompt(question: str, decisions: list[dict], trades: list[dict])
     return "\n".join(lines)
 
 
+def build_strategy_diagnosis_prompt(perf: dict, recent: dict) -> str:
+    """
+    Prompt for a portfolio-analyst-style diagnosis: which strategy is
+    contributing, which is decaying, whether anything should be paused.
+
+    `perf` = all-time per-strategy stats; `recent` = the same over a recent
+    window, so the model can see *change*, not just levels.
+    """
+    lines = [
+        "You are reviewing the agent's strategy performance like a portfolio "
+        "analyst. Using ONLY the numbers below, answer in 4-6 bullets: which "
+        "strategy is contributing most, which (if any) is decaying versus its "
+        "all-time record, and whether any should be paused or down-weighted. "
+        "Be specific and cite the numbers. Do not invent data.",
+        "",
+        "ALL-TIME per strategy:",
+    ]
+    for name, d in sorted(perf.items(), key=lambda kv: kv[1].get("pnl", 0), reverse=True):
+        lines.append(f"  - {name}: {d.get('trades', 0)} trades, "
+                     f"{d.get('win_rate', 0):.0%} win, P&L ${d.get('pnl', 0):,.2f}, "
+                     f"profit factor {d.get('profit_factor', 0):.2f}")
+    if recent:
+        lines.append("")
+        lines.append("RECENT window per strategy:")
+        for name, d in sorted(recent.items(), key=lambda kv: kv[1].get("pnl", 0), reverse=True):
+            lines.append(f"  - {name}: {d.get('trades', 0)} trades, "
+                         f"{d.get('win_rate', 0):.0%} win, P&L ${d.get('pnl', 0):,.2f}")
+    return "\n".join(lines)
+
+
 class AIAnalyst:
     """Claude-backed narrative generator (optional, graceful without a key)."""
 
@@ -207,3 +237,10 @@ class AIAnalyst:
         """Answer a natural-language question over the agent's own audit log."""
         return await self._complete(
             build_query_prompt(question, decisions, trades), max_tokens=1200)
+
+    async def diagnose_strategies(self, perf: dict, recent: dict) -> str | None:
+        """Portfolio-analyst diagnosis of strategy contribution and decay."""
+        if not perf:
+            return None
+        return await self._complete(
+            build_strategy_diagnosis_prompt(perf, recent), max_tokens=1000)
