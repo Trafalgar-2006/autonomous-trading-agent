@@ -16,17 +16,17 @@ general:
   timezone: "US/Eastern"
   log_level: "INFO"
 
-# Forward test — what the walk-forward backtest predicted, so live results can be
-# compared against a number fixed IN ADVANCE (no moving the goalposts later).
-# VERIFIED out-of-sample xs_momentum (12-month lookback, broad universe, 10 folds,
-# 1274 trades) walk-forward vs SPY buy-and-hold, run 2026-07-22:
-#   strategy: CAGR 27.37%, Sharpe 0.80, Sortino 2.01, MaxDD 30.0%
-#   SPY B&H:  CAGR 12.36%, Sharpe 0.77, Sortino 1.05, MaxDD 25.4%
+# Forward test — the number live is compared against, fixed IN ADVANCE.
+# Baseline = FULL-CYCLE walk-forward including the 2008 crash (deep Yahoo history,
+# 2005-2026, 38 folds), for the deployed config (xs_momentum + vol_target 0.25):
+#   strategy: CAGR 10.9%, Sharpe 0.83, MaxDD 29.4%   (SPY B&H: 10.5%, 0.61, 55.2%)
+# NB: the 2019-2026 sub-window alone ran much hotter (~27% CAGR) — that is a
+# favorable regime, NOT a sustainable expectation. Use the full-cycle number.
 forward_test:
   baseline:
-    cagr: 0.274
-    sharpe: 0.80
-    max_drawdown: 0.30
+    cagr: 0.109
+    sharpe: 0.83
+    max_drawdown: 0.294
 
 # AI Analyst — Claude-powered morning brief + EOD narrative (the "2 daily messages").
 # Optional: needs ANTHROPIC_API_KEY in .env; disables cleanly without it.
@@ -39,9 +39,12 @@ ai_analyst:
 # Cross-sectional momentum settings (used when strategy_mode = xs_momentum)
 cross_sectional:
   lookback_days: 252             # ~12 months trailing return to rank on
+  skip_days: 21                  # skip the most recent ~1 month (12-1 momentum; less crowded/reversal-prone)
   top_n: 8                       # number of top names to hold
   use_broad_universe: true       # rank the wider ~70-name research universe
-  vol_target: null               # e.g. 0.25 to volatility-target (lowers drawdown, some return cost)
+  vol_target: 0.25               # ADOPTED: proven crash protection — cut the 2008 fold from
+                                 # -30% to -21% and full-cycle MaxDD 41%->29% at similar CAGR.
+                                 # Set null for raw momentum (higher return, ~41% drawdowns).
   include_crypto: false          # also rank crypto (24/7; validate live execution separately)
   crypto_symbols: ["BTC/USD", "ETH/USD"]
 

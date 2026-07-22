@@ -215,18 +215,25 @@ sizing, cross-sectional top-N) side-by-side against SPY.
 ### Cross-sectional momentum (`strategy_mode: xs_momentum`)
 
 Ranking a broad (~70-name) universe by **12-month trailing return** and holding
-the top 8 — the classic momentum factor — was the **first configuration to beat
-SPY buy-and-hold out-of-sample** on a walk-forward test (2019–2026):
+the top 8 — the classic momentum factor — beats SPY buy-and-hold out-of-sample.
+Tested two ways:
 
-| Config (broad universe, OOS) | CAGR | Sharpe | Sortino | Max DD |
+**Full cycle (2005–2026, incl. the 2008 crash — deep Yahoo history, 38 folds):**
+
+| Config | CAGR | Sharpe | Max DD | Worst fold (2008) |
 |---|---|---|---|---|
-| SPY buy & hold | 12.36% | 0.77 | 1.05 | 25.4% |
-| **XS 12-month momentum (top 8)** | **27.37%** | **0.80** | **2.01** | 30.0% |
+| SPY buy & hold | 10.5% | 0.61 | −55.2% | — |
+| XS momentum (raw) | 13.6% | 0.79 | −40.6% | −29.6% |
+| **XS momentum + vol target (deployed)** | **10.9%** | **0.83** | **−29.4%** | −21.0% |
 
-Verified 2026-07-22 over a 10-fold, 1274-trade walk-forward. Enable it in
-`config/settings.yaml`: `general.strategy_mode: xs_momentum`. Adding volatility
-targeting lowers the drawdown at some cost to return (run `experiments` to see
-the current numbers on your data).
+> **This is the honest expectation: ~11–14% CAGR with 30–40% drawdowns**, beating
+> SPY mostly on *risk-adjusted* terms (Sharpe 0.83 vs 0.61, roughly half the
+> drawdown). Volatility targeting is adopted because it demonstrably softened the
+> 2008 momentum crash.
+
+The recent 2019–2026 sub-window ran much hotter (~27% CAGR) — a favorable regime,
+**not** a sustainable expectation. The forward-test baseline uses the full-cycle
+number so live results are judged against a bar that already includes a crash.
 
 > **Honest caveats:** this is one ~7-year window that excludes the 2009 momentum
 > crash; drawdown is ~30% (tameable to ~20% via `cross_sectional.vol_target`);

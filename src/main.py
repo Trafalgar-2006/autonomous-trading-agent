@@ -118,6 +118,7 @@ class TradingAgent:
                 lookback=xs.get("lookback_days", 252),
                 top_n=xs.get("top_n", 8),
                 vol_target=xs.get("vol_target"),
+                skip=xs.get("skip_days", 21),
             )
 
         # Dynamic universe (starts with core, expanded by scanner)

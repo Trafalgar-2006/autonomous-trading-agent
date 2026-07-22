@@ -28,21 +28,31 @@ class CrossSectionalMomentum:
     name = "xs_momentum"
 
     def __init__(self, lookback: int = 252, top_n: int = 8,
-                 vol_target: float | None = None):
+                 vol_target: float | None = None, skip: int = 21):
         self.lookback = lookback
         self.top_n = top_n
         self.vol_target = vol_target
+        # Skip the most recent `skip` days when measuring momentum (the academic
+        # 12-1 convention). The last month tends to short-term REVERSE, so
+        # including it adds noise; skipping it is the standard, less-crowded
+        # construction. skip=0 reproduces naive momentum.
+        self.skip = max(0, skip)
 
     def rank(self, enriched: dict[str, pd.DataFrame]) -> list[tuple[str, float]]:
-        """Return (symbol, trailing_return) sorted best-first."""
+        """
+        Return (symbol, trailing_return) sorted best-first.
+
+        Momentum is measured from `lookback+skip` days ago to `skip` days ago,
+        i.e. the classic 12-months-minus-1 window.
+        """
         scores = []
         for sym, df in enriched.items():
-            if df is None or len(df) <= self.lookback:
+            if df is None or len(df) <= self.lookback + self.skip:
                 continue
-            price = float(df["close"].iloc[-1])
-            past = float(df["close"].iloc[-1 - self.lookback])
-            if past > 0 and price > 0:
-                scores.append((sym, price / past - 1.0))
+            recent = float(df["close"].iloc[-1 - self.skip])
+            past = float(df["close"].iloc[-1 - self.skip - self.lookback])
+            if past > 0 and recent > 0:
+                scores.append((sym, recent / past - 1.0))
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores
 

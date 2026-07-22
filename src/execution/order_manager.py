@@ -127,16 +127,31 @@ class OrderManager:
 
         auto = self.config.execution_mode == "auto"
 
+        # Names approved earlier in THIS batch, as provisional positions, so the
+        # exposure/correlation/sector/max-position gates account for the whole
+        # batch — not just what the broker already holds. Without this, a
+        # momentum rebalance that approves 8 names at once could load up on one
+        # sector on day one before any of them were "held".
+        batch_positions: list[Position] = []
+
         for signal in signals:
             try:
-                memo = self.decision_engine.build(signal, positions, equity, cash,
-                                                  market_ok=market_ok,
-                                                  correlations=correlations)
+                memo = self.decision_engine.build(
+                    signal, positions + batch_positions, equity, cash,
+                    market_ok=market_ok, correlations=correlations)
                 self.store.save_decision(memo)
                 memos.append(memo)
 
                 if memo.status != DecisionStatus.APPROVED:
                     continue
+
+                # Reserve this name's exposure for the rest of the batch.
+                if signal.action == SignalAction.BUY and memo.quantity > 0:
+                    entry = memo.entry or signal.entry_price or 0.0
+                    batch_positions.append(Position(
+                        symbol=signal.symbol, side=Side.BUY, quantity=memo.quantity,
+                        entry_price=entry, entry_time=datetime.utcnow(),
+                        current_price=entry))
 
                 if auto:
                     await self._process_single_signal(signal, positions, equity, cash)

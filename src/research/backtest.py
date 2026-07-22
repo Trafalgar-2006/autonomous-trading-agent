@@ -37,17 +37,20 @@ def _xs_momentum_signals(enriched, pos_index, date, exp, longs_allowed):
     """
     from ..core.models import Signal, SignalAction
 
+    skip = getattr(exp, "xs_skip", 0)
     scores = {}
     rows = {}
     for sym, df in enriched.items():
         pos = pos_index[sym].get(date)
-        if pos is None or pos < exp.xs_lookback:
+        if pos is None or pos < exp.xs_lookback + skip:
             continue
         row = df.iloc[pos]
-        past = df["close"].iloc[pos - exp.xs_lookback]
+        # Momentum measured to `skip` bars ago (12-1 convention when skip>0).
+        recent = float(df["close"].iloc[pos - skip])
+        past = df["close"].iloc[pos - skip - exp.xs_lookback]
         price = float(row["close"])
-        if past and past > 0 and price > 0:
-            scores[sym] = price / float(past) - 1.0
+        if past and past > 0 and recent > 0 and price > 0:
+            scores[sym] = recent / float(past) - 1.0
             rows[sym] = row
 
     if not scores:

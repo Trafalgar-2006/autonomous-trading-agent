@@ -19,6 +19,7 @@ dependencies = [
     "ta>=0.11",
     "anthropic>=0.40",
     "streamlit>=1.30",
+    "yfinance>=0.2.40",
 ]
 
 [project.optional-dependencies]

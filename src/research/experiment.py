@@ -30,6 +30,7 @@ class ExperimentConfig:
     # the whole universe by trailing return and long the top names.
     xs_momentum: bool = False
     xs_lookback: int = 120                       # bars of trailing return to rank on
+    xs_skip: int = 0                             # skip the most recent N bars (12-1 momentum)
     xs_top: int = 6                              # number of top names to hold
     tags: dict = field(default_factory=dict)
 
